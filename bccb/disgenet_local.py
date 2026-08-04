@@ -58,28 +58,15 @@ class DisgenetApi:
             return True
 
         print(f"Authorizing in {self._name} API...")
-        e_mail: str = input("E-mail: ")
-        password: str = getpass("Password: ")
-        
-        url: str = f"{self._api_url}/auth/"
-        post_params: dict[str, str] = {"email": e_mail, "password": password}
-        headers: dict[str, str] = {
-            "accept: */*",
-            "Content-Type: application/x-www-form-urlencoded",
-        }
+        # DisGeNET migrated from email/password login (returning a session
+        # token) to a static per-user API key generated on their website.
+        # There is no /auth/ endpoint to call anymore, so we just prompt
+        # for the key and store it directly instead of making a POST
+        # request and parsing a token from the response.
+        api_key: str = getpass("API Key: ")
 
-        c = curl.Curl(url=url, post=post_params, req_headers=headers)
-        response: int = c.status
-
-        if response == 200 or response == 0:
-            result: dict[str, str] = json.loads(c.result)
-            self._authenticated = True
-            self._api_key = result["token"]
-            print("Authorization successful.")
-
-        elif response == 404:
-            self._authenticated = False
-            self._api_key = None
+        self._api_key = api_key
+        self._authenticated = True
 
         return self._authenticated and (self._api_key != None)
 
@@ -95,7 +82,7 @@ class DisgenetApi:
                 return f(self, *args, **kwargs)
 
             else:
-                print("Failure in authorization, check your credentials.")
+                _log("DisGeNET failure in authorization, check your credentials.")
 
         return wrapper
 
@@ -111,1433 +98,114 @@ class DisgenetApi:
 
         return wrapper
 
-    def get_ddas_that_share_genes(
-        self,
-        disease: Union[str, List[str]],
-        vocabulary: str = None,
-        source: str = None,
-        p_value: float = None,
-        limit: int = 10,
-    ) -> NamedTuple(
-        "DiseaseDiseaseAssociation",
-        [
-            ("disease1_name", str),
-            ("disease2_name", str),
-            ("disease1_ngenes", int),
-            ("disease2_ngenes", int),
-            ("disease1_disease_class", Tuple[str]),
-            ("disease2_disease_class", Tuple[str]),
-            ("disease1_disease_class_name", Tuple[str]),
-            ("disease2_disease_class_name", Tuple[str]),
-            ("jaccard_genes", float),
-            ("pvalue_jaccard_genes", float),
-            ("source", str),
-            ("ngenes1", int),
-            ("ngenes2", int),
-            ("ngenes", int),
-            ("nvariants1", int),
-            ("nvariants2", int),
-            ("diseaseid1", str),
-            ("diseaseid2", str),
-        ],
-    ):
-        """
-        Returns Disease-Disease Associations with given query.
+    # get_ddas_that_share_genes() and get_ddas_that_share_variants() were
+    # removed: the new DisGeNET DDA API has a single /dda endpoint that
+    # always returns both gene-sharing and variant-sharing metrics
+    # together in one query, so the separate genes/variants split no
+    # longer applies.
 
-        @disease: Union[str, List[str]]
-            if vocabulary is given:
-                Disease id (ICD9CM, ICD10,MeSH, OMIM, DO, EFO,
-                NCI, HPO, MONDO, or ORDO identifier) or list of disease ids up to 100.
-            else:
-                Disease id (UMLS CUI) or list of disease ids up to 100.
-        @vocabulary: str
-            Disease Vocabulary.
-            Available values : icd9cm, icd10, mesh, omim, do, efo,
-            nci, hpo, mondo, ordo
-        @source: str
-            Source of the DDA.
-            Available values : CURATED, INFERRED, ANIMAL_MODELS, ALL, BEFREE,
-            CGI, CLINGEN, CLINVAR, CTD_human, CTD_mouse, CTD_rat, GENOMICS_ENGLAND,
-            GWASCAT, GWASDB, HPO, LHGDN, MGD, ORPHANET, PSYGENET, RGD, UNIPROT
-        @p_value: float
-            p value associated to the Jaccard Index based on the shared genes.
-        @limit: int
-            Number of associated diseases to retrieve.
-            Default value : 10
-        """
-
-        return self._get_ddas(
-            disease=disease,
-            share="genes",
-            vocabulary=vocabulary,
-            source=source,
-            p_value=p_value,
-            limit=limit,
-        )
-
-    def get_ddas_that_share_variants(
-        self,
-        disease: Union[str, List[str]],
-        vocabulary: str = None,
-        source: str = None,
-        p_value: float = None,
-        limit: int = 10,
-    ) -> NamedTuple(
-        "DiseaseDiseaseAssociation",
-        [
-            ("disease1_name", str),
-            ("disease2_name", str),
-            ("disease1_nvariants", int),
-            ("disease2_nvariants", int),
-            ("disease1_disease_class", Tuple[str]),
-            ("disease2_disease_class", Tuple[str]),
-            ("disease1_disease_class_name", Tuple[str]),
-            ("disease2_disease_class_name", Tuple[str]),
-            ("jaccard_variants", float),
-            ("pvalue_jaccard_variants", float),
-            ("source", str),
-            ("ngenes1", int),
-            ("ngenes2", int),
-            ("nvariants", int),
-            ("nvariants1", int),
-            ("nvariants2", int),
-            ("diseaseid1", str),
-            ("diseaseid2", str),
-        ],
-    ):
-        """
-        Returns Disease-Disease Associations with given query.
-
-        @disease: Union[str, List[str]]
-            if vocabulary is given:
-                Disease id (ICD9CM, ICD10,MeSH, OMIM, DO, EFO,
-                NCI, HPO, MONDO, or ORDO identifier) or list of disease ids up to 100.
-            else:
-                Disease id (UMLS CUI) or list of disease ids up to 100.
-        @vocabulary: str
-            Disease Vocabulary.
-            Available values : icd9cm, icd10, mesh, omim, do, efo,
-            nci, hpo, mondo, ordo
-        @source: str
-            Source of the DDA.
-            Available values : CURATED, INFERRED, ANIMAL_MODELS, ALL, BEFREE,
-            CGI, CLINGEN, CLINVAR, CTD_human, CTD_mouse, CTD_rat, GENOMICS_ENGLAND,
-            GWASCAT, GWASDB, HPO, LHGDN, MGD, ORPHANET, PSYGENET, RGD, UNIPROT
-        @p_value: float
-            p value associated to the Jaccard Index based on the shared genes.
-        @limit: int
-            Number of associated diseases to retrieve.
-            Default value : 10
-        """
-
-        return self._get_ddas(
-            disease=disease,
-            share="variants",
-            vocabulary=vocabulary,
-            source=source,
-            p_value=p_value,
-            limit=limit,
-        )
-
-    def get_vdas_by_variants(
-        self,
-        variant: Union[str, List[str]],
-        gene: Union[str, List[str]] = None,
-        disease: Union[str, List[str]] = None,
-        source: str = None,
-        min_score: float = None,
-        max_score: float = None,
-        min_ei: float = None,
-        max_ei: float = None,
-        disease_type: str = None,
-        disease_class: Union[str, List[str]] = None,
-        min_dsi: float = None,
-        max_dsi: float = None,
-        min_dpi: float = None,
-        max_dpi: float = None,
-        limit: int = None,
-    ) -> NamedTuple(
-        "VariantDiseaseAssociation",
-        [
-            ("variantid", str),
-            ("gene_symbol", str),
-            ("variant_dsi", float),
-            ("variant_dpi", float),
-            ("variant_consequence_type", str),
-            ("diseaseid", str),
-            ("disease_name", str),
-            ("disease_class", Tuple[str]),
-            ("disease_class_name", Tuple[str]),
-            ("disease_type", str),
-            ("disease_semantic_type", str),
-            ("score", float),
-            ("ei", float),
-            ("year_initial", int),
-            ("year_final", int),
-            ("source", str),
-        ],
-    ):
-        """
-        Returns Variant-Disease Associations by variant(s).
-
-        @variant: Union[str, List[str]]
-            Variant (dbSNP Identifier) or list of variants.
-        @disease: Union[str, List[str]]
-            if vocabulary is given:
-                Disease id (ICD9CM, ICD10, MeSH, OMIM, DO, EFO, NCI, HPO, MONDO,
-                or ORDO identifier) or list of disease ids to filter the results.
-            else:
-                Disease id (UMLS CUI) or list of diseases to filter the results.
-        @gene: Union[str, List[str]]
-            Gene (NCBI Entrez Identifier or HGNC Symbol) or list of genes to filter the results.
-        @source: str
-            Source of the VDA.
-            Available values : CURATED, BEFREE, ALL, CLINVAR, GWASCAT, GWASDB, UNIPROT
-        @min_score: float
-            Min value of the variant-disease score range.
-        @max_score: float
-            Max value of the variant-disease score range.
-        @min_ei: float
-            Min value of the evidence index range.
-        @max_ei: float
-            Max value of the evidence index range.
-        @disease_type: str
-            DisGeNET Disease Type.
-            Available values : disease, phenotype, group
-        @disease_class: Union[str, List[str]]
-            MeSH Disease Classes
-            Available values : C01, C04, C05, C06, C07, C08, C09, C10, C11, C12,
-            C13, C14, C15, C16, C17, C18, C19, C20, C21, C22, C23, C24, C25, C26,
-            F01, F02, F03
-        @min_dsi: float
-            Min value of the DSI range for the variant.
-        @max_dsi: float
-            Max value of the DSI range for the variant.
-        @min_dpi: float
-            Min value of the DPI range for the variant.
-        @max_dpi: float
-            Max value of the DPI range for the variant.
-        @limit: int
-            Number of VDAs to retrieve.
-        """
-
-        gene = self._list_to_str(gene, "Gene ID")
-        disease = self._list_to_str(disease, "Disease ID")
-        variant = self._list_to_str(variant, "Variant ID", limit=100)
-
-        return self._get_vdas(
-            gene=gene,
-            disease=disease,
-            variant=variant,
-            vocabulary=None,
-            by="variant",
-            source=source,
-            min_score=min_score,
-            max_score=max_score,
-            min_ei=min_ei,
-            max_ei=max_ei,
-            disease_type=disease_type,
-            disease_class=disease_class,
-            min_dsi=min_dsi,
-            max_dsi=max_dsi,
-            min_dpi=min_dpi,
-            max_dpi=max_dpi,
-            limit=limit,
-        )
-
-    def get_vdas_by_genes(
-        self,
-        gene: Union[str, List[str]],
-        disease: Union[str, List[str]] = None,
-        variant: Union[str, List[str]] = None,
-        source: str = None,
-        min_score: float = None,
-        max_score: float = None,
-        min_ei: float = None,
-        max_ei: float = None,
-        disease_type: str = None,
-        disease_class: Union[str, List[str]] = None,
-        min_dsi: float = None,
-        max_dsi: float = None,
-        min_dpi: float = None,
-        max_dpi: float = None,
-        limit: int = None,
-    ) -> NamedTuple(
-        "VariantDiseaseAssociation",
-        [
-            ("variantid", str),
-            ("gene_symbol", str),
-            ("variant_dsi", float),
-            ("variant_dpi", float),
-            ("variant_consequence_type", str),
-            ("diseaseid", str),
-            ("disease_name", str),
-            ("disease_class", Tuple[str]),
-            ("disease_class_name", Tuple[str]),
-            ("disease_type", str),
-            ("disease_semantic_type", str),
-            ("score", float),
-            ("ei", float),
-            ("year_initial", int),
-            ("year_final", int),
-            ("source", str),
-        ],
-    ):
-        """
-        Returns Variant-Disease Associations by gene(s).
-
-        @gene: Union[str, List[str]]
-            Gene (NCBI Entrez Identifier or HGNC Symbol) or list of genes.
-        @variant: Union[str, List[str]]
-            Variant (dbSNP Identifier) or list of variants to filter the results.
-        @disease: Union[str, List[str]]
-            if vocabulary is given:
-                Disease id (ICD9CM, ICD10, MeSH, OMIM, DO, EFO, NCI, HPO, MONDO,
-                or ORDO identifier) or list of disease ids to filter the results.
-            else:
-                Disease id (UMLS CUI) or list of diseases to filter the results.
-        @source: str
-            Source of the VDA.
-            Available values : CURATED, BEFREE, ALL, CLINVAR, GWASCAT, GWASDB, UNIPROT
-        @min_score: float
-            Min value of the variant-disease score range.
-        @max_score: float
-            Max value of the variant-disease score range.
-        @min_ei: float
-            Min value of the evidence index range.
-        @max_ei: float
-            Max value of the evidence index range.
-        @disease_type: str
-            DisGeNET Disease Type.
-            Available values : disease, phenotype, group
-        @disease_class: Union[str, List[str]]
-            MeSH Disease Classes
-            Available values : C01, C04, C05, C06, C07, C08, C09, C10, C11, C12,
-            C13, C14, C15, C16, C17, C18, C19, C20, C21, C22, C23, C24, C25, C26,
-            F01, F02, F03
-        @min_dsi: float
-            Min value of the DSI range for the variant.
-        @max_dsi: float
-            Max value of the DSI range for the variant.
-        @min_dpi: float
-            Min value of the DPI range for the variant.
-        @max_dpi: float
-            Max value of the DPI range for the variant.
-        @limit: int
-            Number of VDAs to retrieve.
-        """
-
-        gene = self._list_to_str(gene, "Gene ID", limit=100)
-        disease = self._list_to_str(disease, "Disease ID")
-        variant = self._list_to_str(variant, "Variant ID")
-
-        return self._get_vdas(
-            gene=gene,
-            disease=disease,
-            variant=variant,
-            vocabulary=None,
-            by="gene",
-            source=source,
-            min_score=min_score,
-            max_score=max_score,
-            min_ei=min_ei,
-            max_ei=max_ei,
-            disease_type=disease_type,
-            disease_class=disease_class,
-            min_dsi=min_dsi,
-            max_dsi=max_dsi,
-            min_dpi=min_dpi,
-            max_dpi=max_dpi,
-            limit=limit,
-        )
-
-    def get_vdas_by_diseases(
-        self,
-        disease: Union[str, List[str]],
-        gene: Union[str, List[str]] = None,
-        variant: Union[str, List[str]] = None,
-        vocabulary: str = None,
-        source: str = None,
-        min_score: float = None,
-        max_score: float = None,
-        min_ei: float = None,
-        max_ei: float = None,
-        disease_type: str = None,
-        disease_class: Union[str, List[str]] = None,
-        min_dsi: float = None,
-        max_dsi: float = None,
-        min_dpi: float = None,
-        max_dpi: float = None,
-        limit: int = None,
-    ) -> NamedTuple(
-        "VariantDiseaseAssociation",
-        [
-            ("variantid", str),
-            ("gene_symbol", str),
-            ("variant_dsi", float),
-            ("variant_dpi", float),
-            ("variant_consequence_type", str),
-            ("diseaseid", str),
-            ("disease_name", str),
-            ("disease_class", Tuple[str]),
-            ("disease_class_name", Tuple[str]),
-            ("disease_type", str),
-            ("disease_semantic_type", str),
-            ("score", float),
-            ("ei", float),
-            ("year_initial", int),
-            ("year_final", int),
-            ("source", str),
-        ],
-    ):
-        """
-        Returns Variant-Disease Associations disease(s).
-
-        @disease: Union[str, List[str]]
-            if vocabulary is given:
-                Disease id (ICD9CM, ICD10, MeSH, OMIM, DO, EFO, NCI, HPO, MONDO,
-                or ORDO identifier) or list of disease ids up to 100.
-            else:
-                Disease id (UMLS CUI) or list of diseases up to 100.
-        @vocabulary: str
-            Disease Vocabulary.
-            Available values : icd9cm, icd10, mesh, omim, do, efo, nci, hpo, mondo, ordo
-        @variant: Union[str, List[str]]
-            Variant (dbSNP Identifier) or list of variants to filter the results.
-        @gene: Union[str, List[str]]
-            Gene (NCBI Entrez Identifier or HGNC Symbol) or list of genes to filter the results.
-        @source: str
-            Source of the VDA.
-            Available values : CURATED, BEFREE, ALL, CLINVAR, GWASCAT, GWASDB, UNIPROT
-        @min_score: float
-            Min value of the variant-disease score range.
-        @max_score: float
-            Max value of the variant-disease score range.
-        @min_ei: float
-            Min value of the evidence index range.
-        @max_ei: float
-            Max value of the evidence index range.
-        @disease_type: str
-            DisGeNET Disease Type.
-            Available values : disease, phenotype, group
-        @disease_class: Union[str, List[str]]
-            MeSH Disease Classes
-            Available values : C01, C04, C05, C06, C07, C08, C09, C10, C11, C12,
-            C13, C14, C15, C16, C17, C18, C19, C20, C21, C22, C23, C24, C25, C26,
-            F01, F02, F03
-        @min_dsi: float
-            Min value of the DSI range for the variant.
-        @max_dsi: float
-            Max value of the DSI range for the variant.
-        @min_dpi: float
-            Min value of the DPI range for the variant.
-        @max_dpi: float
-            Max value of the DPI range for the variant.
-        @limit: int
-            Number of VDAs to retrieve.
-        """
-
-        gene = self._list_to_str(gene, "Gene ID")
-        disease = self._list_to_str(disease, "Disease ID", limit=100)
-        variant = self._list_to_str(variant, "Variant ID")
-
-        return self._get_vdas(
-            gene=gene,
-            disease=disease,
-            variant=variant,
-            vocabulary=vocabulary,
-            by="disease",
-            source=source,
-            min_score=min_score,
-            max_score=max_score,
-            min_ei=min_ei,
-            max_ei=max_ei,
-            disease_type=disease_type,
-            disease_class=disease_class,
-            min_dsi=min_dsi,
-            max_dsi=max_dsi,
-            min_dpi=min_dpi,
-            max_dpi=max_dpi,
-            limit=limit,
-        )
-
-    def get_vdas_by_source(
-        self,
-        source: str,
-        gene: Union[str, List[str]] = None,
-        disease: Union[str, List[str]] = None,
-        variant: Union[str, List[str]] = None,
-        vocabulary: str = None,
-        by: str = None,
-        min_score: float = None,
-        max_score: float = None,
-        min_ei: float = None,
-        max_ei: float = None,
-        disease_type: str = None,
-        disease_class: Union[str, List[str]] = None,
-        min_dsi: float = None,
-        max_dsi: float = None,
-        min_dpi: float = None,
-        max_dpi: float = None,
-        limit: int = None,
-    ) -> NamedTuple(
-        "VariantDiseaseAssociation",
-        [
-            ("variantid", str),
-            ("gene_symbol", str),
-            ("variant_dsi", float),
-            ("variant_dpi", float),
-            ("variant_consequence_type", str),
-            ("diseaseid", str),
-            ("disease_name", str),
-            ("disease_class", Tuple[str]),
-            ("disease_class_name", Tuple[str]),
-            ("disease_type", str),
-            ("disease_semantic_type", str),
-            ("score", float),
-            ("ei", float),
-            ("year_initial", int),
-            ("year_final", int),
-            ("source", str),
-        ],
-    ):
-        """
-        Returns Variant-Disease Associations by source.
-
-        @source: str
-            Source of the VDA.
-            Available values : CURATED, BEFREE, ALL, CLINVAR, GWASCAT, GWASDB, UNIPROT
-        @disease: Union[str, List[str]]
-            Disease id (UMLS CUI) or list of diseases to filter the results..
-        @variant: Union[str, List[str]]
-            Variant (dbSNP Identifier) or list of variants to filter the results..
-        @gene: Union[str, List[str]]
-            Gene (NCBI Entrez Identifier or HGNC Symbol) or list of genes to filter the results..
-        @min_score: float
-            Min value of the variant-disease score range.
-        @max_score: float
-            Max value of the variant-disease score range.
-        @min_ei: float
-            Min value of the evidence index range.
-        @max_ei: float
-            Max value of the evidence index range.
-        @disease_type: str
-            DisGeNET Disease Type.
-            Available values : disease, phenotype, group
-        @disease_class: Union[str, List[str]]
-            MeSH Disease Classes
-            Available values : C01, C04, C05, C06, C07, C08, C09, C10, C11, C12,
-            C13, C14, C15, C16, C17, C18, C19, C20, C21, C22, C23, C24, C25, C26,
-            F01, F02, F03
-        @min_dsi: float
-            Min value of the DSI range for the variant.
-        @max_dsi: float
-            Max value of the DSI range for the variant.
-        @min_dpi: float
-            Min value of the DPI range for the variant.
-        @max_dpi: float
-            Max value of the DPI range for the variant.
-        @limit: int
-            Number of VDAs to retrieve.
-        """
-
-        disease = self._list_to_str(disease, "Disease ID")
-        variant = self._list_to_str(variant, "Variant ID")
-        gene = self._list_to_str(gene, "Gene ID")
-
-        return self._get_vdas(
-            gene=gene,
-            disease=disease,
-            variant=variant,
-            vocabulary=vocabulary,
-            by="source",
-            source=source,
-            min_score=min_score,
-            max_score=max_score,
-            min_ei=min_ei,
-            max_ei=max_ei,
-            disease_type=disease_type,
-            disease_class=disease_class,
-            min_dsi=min_dsi,
-            max_dsi=max_dsi,
-            min_dpi=min_dpi,
-            max_dpi=max_dpi,
-            limit=limit,
-        )
-
-    def get_gdas_by_genes(
-        self,
-        gene: Union[str, List[str]],
-        disease: Union[str, List[str]] = None,
-        source: str = None,
-        min_score: float = None,
-        max_score: float = None,
-        min_ei: float = None,
-        max_ei: float = None,
-        disease_type: str = None,
-        disease_class: Union[str, List[str]] = None,
-        min_dsi: float = None,
-        max_dsi: float = None,
-        min_dpi: float = None,
-        max_dpi: float = None,
-        min_pli: float = None,
-        max_pli: float = None,
-        limit: int = None,
-    ) -> NamedTuple(
-        "GeneDiseaseAssociation",
-        [
-            ("geneid", int),
-            ("gene_symbol", str),
-            ("uniprotid", str),
-            ("gene_dsi", float),
-            ("gene_dpi", float),
-            ("gene_pli", float),
-            ("protein_class", str),
-            ("protein_class_name", str),
-            ("diseaseid", str),
-            ("disease_name", str),
-            ("disease_class", Tuple[str]),
-            ("disease_class_name", Tuple[str]),
-            ("disease_type", str),
-            ("disease_semantic_type", str),
-            ("score", float),
-            ("ei", float),
-            ("el", str),
-            ("year_initial", int),
-            ("year_final", int),
-            ("source", str),
-        ],
-    ):
-        """
-        Returns Gene-Disease Associations by gene(s).
-
-        @gene: Union[str, List[str]]
-            Gene (NCBI Entrez Identifier or HGNC Symbol) or list of genes up to 100.
-        @disease: Union[str, List[str]]
-            Disease id (UMLS CUI) or list of disease ids up to 100.
-        @source: str
-            Source of the GDA.
-            Available values : CURATED, INFERRED, ANIMAL_MODELS, ALL, BEFREE, CGI, CLINGEN,
-            CLINVAR, CTD_human, CTD_mouse, CTD_rat, GENOMICS_ENGLAND, GWASCAT, GWASDB, HPO,
-            LHGDN, MGD, ORPHANET, PSYGENET, RGD, UNIPROT
-        @min_score: float
-            Min value of the gene-disease score range.
-        @max_score: float
-            Max value of the gene-disease score range.
-        @min_ei: float
-            Min value of the evidence index range.
-        @max_ei: float
-            Max value of the evidence index range.
-        @disease_type: str
-            DisGeNET Disease Type.
-            Available values : disease, phenotype, group
-        @disease_class: Union[str, List[str]]
-            MeSH Disease Classes
-            Available values : C01, C04, C05, C06, C07, C08, C09, C10, C11, C12,
-            C13, C14, C15, C16, C17, C18, C19, C20, C21, C22, C23, C24, C25, C26,
-            F01, F02, F03
-        @min_dsi: float
-            Min value of the DSI range for the gene.
-        @max_dsi: float
-            Max value of the DSI range for the gene.
-        @min_dpi: float
-            Min value of the DPI range for the gene.
-        @max_dpi: float
-            Max value of the DPI range for the gene.
-        @min_pli: float
-            Min value of the pLI range.
-        @max_pli: float
-            Max value of the pLI range.
-        @limit: int
-            Number of GDAs to retrieve.
-        """
-
-        gene = self._list_to_str(gene, "Gene ID", limit=100)
-        disease = self._list_to_str(disease, "Disease ID", limit=100)
-
-        return self._get_gdas(
-            gene=gene,
-            disease=disease,
-            uniprot=None,
-            vocabulary=None,
-            by="gene",
-            source=source,
-            min_score=min_score,
-            max_score=max_score,
-            min_ei=min_ei,
-            max_ei=max_ei,
-            disease_type=disease_type,
-            disease_class=disease_class,
-            min_dsi=min_dsi,
-            max_dsi=max_dsi,
-            min_dpi=min_dpi,
-            max_dpi=max_dpi,
-            min_pli=min_pli,
-            max_pli=max_pli,
-            limit=limit,
-        )
-
-    def get_gdas_by_diseases(
-        self,
-        disease: Union[str, List[str]],
-        gene: Union[str, List[str]] = None,
-        vocabulary: str = None,
-        source: str = None,
-        min_score: float = None,
-        max_score: float = None,
-        min_ei: float = None,
-        max_ei: float = None,
-        disease_type: str = None,
-        disease_class: Union[str, List[str]] = None,
-        min_dsi: float = None,
-        max_dsi: float = None,
-        min_dpi: float = None,
-        max_dpi: float = None,
-        min_pli: float = None,
-        max_pli: float = None,
-        limit: int = None,
-    ) -> NamedTuple(
-        "GeneDiseaseAssociation",
-        [
-            ("geneid", int),
-            ("gene_symbol", str),
-            ("uniprotid", str),
-            ("gene_dsi", float),
-            ("gene_dpi", float),
-            ("gene_pli", float),
-            ("protein_class", str),
-            ("protein_class_name", str),
-            ("diseaseid", str),
-            ("disease_name", str),
-            ("disease_class", Tuple[str]),
-            ("disease_class_name", Tuple[str]),
-            ("disease_type", str),
-            ("disease_semantic_type", str),
-            ("score", float),
-            ("ei", float),
-            ("el", str),
-            ("year_initial", int),
-            ("year_final", int),
-            ("source", str),
-        ],
-    ):
-        """
-        Returns Gene-Disease Associations by disease(s).
-
-        @disease: Union[str, List[str]]
-            if vocabulary is given:
-                Disease id (ICD9CM, ICD10, MeSH, OMIM, DO, EFO, NCI, HPO, MONDO,
-                or ORDO identifier) or list of disease ids up to 100.
-            else:
-                Disease id (UMLS CUI) or list of diseases up to 100.
-        @vocabulary: str
-            Disease Vocabulary.
-            Available values : icd9cm, icd10, mesh, omim, do, efo, nci, hpo, mondo, ordo
-        @gene: Union[str, List[str]]
-            Gene (NCBI Entrez Identifier or HGNC Symbol) or list of genes to filter the results.
-        @by: str
-            Return associations by:
-            Avaliable values : genes, disease, uniprot, source
-        @source: str
-            Source of the GDA.
-            Available values : CURATED, INFERRED, ANIMAL_MODELS, ALL, BEFREE, CGI, CLINGEN,
-            CLINVAR, CTD_human, CTD_mouse, CTD_rat, GENOMICS_ENGLAND, GWASCAT, GWASDB, HPO,
-            LHGDN, MGD, ORPHANET, PSYGENET, RGD, UNIPROT
-        @min_score: float
-            Min value of the gene-disease score range.
-        @max_score: float
-            Max value of the gene-disease score range.
-        @min_ei: float
-            Min value of the evidence index range.
-        @max_ei: float
-            Max value of the evidence index range.
-        @disease_type: str
-            DisGeNET Disease Type.
-            Available values : disease, phenotype, group
-        @disease_class: Union[str, List[str]]
-            MeSH Disease Classes
-            Available values : C01, C04, C05, C06, C07, C08, C09, C10, C11, C12,
-            C13, C14, C15, C16, C17, C18, C19, C20, C21, C22, C23, C24, C25, C26,
-            F01, F02, F03
-        @min_dsi: float
-            Min value of the DSI range for the gene.
-        @max_dsi: float
-            Max value of the DSI range for the gene.
-        @min_dpi: float
-            Min value of the DPI range for the gene.
-        @max_dpi: float
-            Max value of the DPI range for the gene.
-        @min_pli: float
-            Min value of the pLI range.
-        @max_pli: float
-            Max value of the pLI range.
-        @limit: int
-            Number of GDAs to retrieve.
-        """
-
-        gene = self._list_to_str(gene, "Gene ID")
-        disease = self._list_to_str(disease, "Disease ID", limit=100)
-
-        return self._get_gdas(
-            gene=gene,
-            disease=disease,
-            uniprot=None,
-            vocabulary=vocabulary,
-            by="disease",
-            source=source,
-            min_score=min_score,
-            max_score=max_score,
-            min_ei=min_ei,
-            max_ei=max_ei,
-            disease_type=disease_type,
-            disease_class=disease_class,
-            min_dsi=min_dsi,
-            max_dsi=max_dsi,
-            min_dpi=min_dpi,
-            max_dpi=max_dpi,
-            min_pli=min_pli,
-            max_pli=max_pli,
-            limit=limit,
-        )
-
-    def get_gdas_by_uniprots(
-        self,
-        uniprot: Union[str, List[str]],
-        disease: Union[str, List[str]] = None,
-        source: str = None,
-        min_score: float = None,
-        max_score: float = None,
-        min_ei: float = None,
-        max_ei: float = None,
-        disease_type: str = None,
-        disease_class: Union[str, List[str]] = None,
-        min_dsi: float = None,
-        max_dsi: float = None,
-        min_dpi: float = None,
-        max_dpi: float = None,
-        min_pli: float = None,
-        max_pli: float = None,
-        limit: int = None,
-    ) -> NamedTuple(
-        "GeneDiseaseAssociation",
-        [
-            ("geneid", int),
-            ("gene_symbol", str),
-            ("uniprotid", str),
-            ("gene_dsi", float),
-            ("gene_dpi", float),
-            ("gene_pli", float),
-            ("protein_class", str),
-            ("protein_class_name", str),
-            ("diseaseid", str),
-            ("disease_name", str),
-            ("disease_class", Tuple[str]),
-            ("disease_class_name", Tuple[str]),
-            ("disease_type", str),
-            ("disease_semantic_type", str),
-            ("score", float),
-            ("ei", float),
-            ("el", str),
-            ("year_initial", int),
-            ("year_final", int),
-            ("source", str),
-        ],
-    ):
-        """
-        Returns Gene-Disease Associations by UniProt Accession(s).
-
-        @uniprot: Union[str, List[str]]
-            UniProt identifier or list of UniProt identifiers up to 100.
-        @disease: Union[str, List[str]]
-            Disease id (UMLS CUI) or list of diseases to filter the results.
-        @source: str
-            Source of the GDA.
-            Available values : CURATED, INFERRED, ANIMAL_MODELS, ALL, BEFREE, CGI, CLINGEN,
-            CLINVAR, CTD_human, CTD_mouse, CTD_rat, GENOMICS_ENGLAND, GWASCAT, GWASDB, HPO,
-            LHGDN, MGD, ORPHANET, PSYGENET, RGD, UNIPROT
-        @min_score: float
-            Min value of the gene-disease score range.
-        @max_score: float
-            Max value of the gene-disease score range.
-        @min_ei: float
-            Min value of the evidence index range.
-        @max_ei: float
-            Max value of the evidence index range.
-        @disease_type: str
-            DisGeNET Disease Type.
-            Available values : disease, phenotype, group
-        @disease_class: Union[str, List[str]]
-            MeSH Disease Classes
-            Available values : C01, C04, C05, C06, C07, C08, C09, C10, C11, C12,
-            C13, C14, C15, C16, C17, C18, C19, C20, C21, C22, C23, C24, C25, C26,
-            F01, F02, F03
-        @min_dsi: float
-            Min value of the DSI range for the gene.
-        @max_dsi: float
-            Max value of the DSI range for the gene.
-        @min_dpi: float
-            Min value of the DPI range for the gene.
-        @max_dpi: float
-            Max value of the DPI range for the gene.
-        @min_pli: float
-            Min value of the pLI range.
-        @max_pli: float
-            Max value of the pLI range.
-        @limit: int
-            Number of GDAs to retrieve.
-        """
-
-        uniprot = self._list_to_str(uniprot, "Uniprot ID", limit=100)
-        disease = self._list_to_str(disease, "Disease ID")
-
-        return self._get_gdas(
-            gene=None,
-            disease=disease,
-            uniprot=uniprot,
-            vocabulary=None,
-            by="uniprot",
-            source=source,
-            min_score=min_score,
-            max_score=max_score,
-            min_ei=min_ei,
-            max_ei=max_ei,
-            disease_type=disease_type,
-            disease_class=disease_class,
-            min_dsi=min_dsi,
-            max_dsi=max_dsi,
-            min_dpi=min_dpi,
-            max_dpi=max_dpi,
-            min_pli=min_pli,
-            max_pli=max_pli,
-            limit=limit,
-        )
-
-    def get_gdas_by_source(
-        self,
-        source: str,
-        gene: Union[str, List[str]] = None,
-        disease: Union[str, List[str]] = None,
-        min_score: float = None,
-        max_score: float = None,
-        min_ei: float = None,
-        max_ei: float = None,
-        disease_type: str = None,
-        disease_class: Union[str, List[str]] = None,
-        min_dsi: float = None,
-        max_dsi: float = None,
-        min_dpi: float = None,
-        max_dpi: float = None,
-        min_pli: float = None,
-        max_pli: float = None,
-        limit: int = None,
-    ) -> NamedTuple(
-        "GeneDiseaseAssociation",
-        [
-            ("geneid", int),
-            ("gene_symbol", str),
-            ("uniprotid", str),
-            ("gene_dsi", float),
-            ("gene_dpi", float),
-            ("gene_pli", float),
-            ("protein_class", str),
-            ("protein_class_name", str),
-            ("diseaseid", str),
-            ("disease_name", str),
-            ("disease_class", Tuple[str]),
-            ("disease_class_name", Tuple[str]),
-            ("disease_type", str),
-            ("disease_semantic_type", str),
-            ("score", float),
-            ("ei", float),
-            ("el", str),
-            ("year_initial", int),
-            ("year_final", int),
-            ("source", str),
-        ],
-    ):
-        """
-        Returns Gene-Disease Associations by source.
-
-        @source: str
-            Source of the GDA.
-            Available values : CURATED, INFERRED, ANIMAL_MODELS, ALL, BEFREE, CGI, CLINGEN,
-            CLINVAR, CTD_human, CTD_mouse, CTD_rat, GENOMICS_ENGLAND, GWASCAT, GWASDB, HPO,
-            LHGDN, MGD, ORPHANET, PSYGENET, RGD, UNIPROT
-        @gene: Union[str, List[str]]
-            Gene (NCBI Entrez Identifier or HGNC Symbol) or list of genes to filter the results.
-        @disease: Union[str, List[str]]
-            Disease id (UMLS CUI) or list of diseases to filter the results.
-        @min_score: float
-            Min value of the gene-disease score range.
-        @max_score: float
-            Max value of the gene-disease score range.
-        @min_ei: float
-            Min value of the evidence index range.
-        @max_ei: float
-            Max value of the evidence index range.
-        @disease_type: str
-            DisGeNET Disease Type.
-            Available values : disease, phenotype, group
-        @disease_class: Union[str, List[str]]
-            MeSH Disease Classes
-            Available values : C01, C04, C05, C06, C07, C08, C09, C10, C11, C12,
-            C13, C14, C15, C16, C17, C18, C19, C20, C21, C22, C23, C24, C25, C26,
-            F01, F02, F03
-        @min_dsi: float
-            Min value of the DSI range for the gene.
-        @max_dsi: float
-            Max value of the DSI range for the gene.
-        @min_dpi: float
-            Min value of the DPI range for the gene.
-        @max_dpi: float
-            Max value of the DPI range for the gene.
-        @min_pli: float
-            Min value of the pLI range.
-        @max_pli: float
-            Max value of the pLI range.
-        @limit: int
-            Number of GDAs to retrieve.
-        """
-
-        gene = self._list_to_str(gene, "Gene ID")
-        disease = self._list_to_str(disease, "Disease ID")
-
-        return self._get_gdas(
-            gene=gene,
-            disease=disease,
-            uniprot=None,
-            vocabulary=None,
-            by="source",
-            source=source,
-            min_score=min_score,
-            max_score=max_score,
-            min_ei=min_ei,
-            max_ei=max_ei,
-            disease_type=disease_type,
-            disease_class=disease_class,
-            min_dsi=min_dsi,
-            max_dsi=max_dsi,
-            min_dpi=min_dpi,
-            max_dpi=max_dpi,
-            min_pli=min_pli,
-            max_pli=max_pli,
-            limit=limit,
-        )
-        
-    def get_vda_evidences_by_variant(
-        variant,
-        gene=None,
-        disease=None,
-        source: str = None,
-        min_year: int = None,
-        max_year: int = None,
-        min_score: float = None,
-        max_score: float = None,
-        limit: int = None,
-        offset: int = None,
-        get_all: bool = True
-    ):
-        
-        variant = self._list_to_str(variant, "variant ID", limit=100)
-        
-        if disease != None:
-            disease = self._list_to_str(disease, "disease ID", limit=100)
-        
-        if gene != None:
-            gene = self._list_to_str(gene, "gene ID")
-        
-        return _get_evidences(
-            of="vda",
-            by="variant",
-            gene = gene,
-            disease = disease,
-            variant = variant,
-            source = source,
-            min_year = min_year,
-            max_year = max_year,
-            min_score = min_score,
-            max_score = max_score,
-            limit = limit,
-            offset = offset,
-            get_all = get_all
-        )
     
-    def get_vda_evidences_by_disease(
-        disease,
-        variant=None,
-        gene=None,
-        source: str = None,
-        min_year: int = None,
-        max_year: int = None,
-        min_score: float = None,
-        max_score: float = None,
-        limit: int = None,
-        offset: int = None,
-        get_all: bool = True
-    ):
-        
-        disease = self._list_to_str(disease, "disease ID", limit=100)
-        
+    # _get_vdas(), get_vdas_by_variants(), get_vdas_by_genes(),
+    # get_vdas_by_diseases(), and get_vdas_by_source() were removed. These
+    # five functions existed to select a "by" routing mode (gene, disease,
+    # variant, source) for the old path-based /vda/{by}/... endpoint,
+    # where each identifier type required a different URL. The new API
+    # has a single fixed endpoint (/vda/summary) where variant, gene,
+    # disease, source, etc. are all just optional query parameters on the
+    # same call, so there's no more separate URL/routing per identifier
+    # type. Replaced by the single get_vda_summary() function below, which
+    # accepts all identifier types and filters at once.
+
+    def get_vda_summary(
+    self,
+    variant: Union[str, List[str]] = None,
+    gene_ncbi_id: Union[str, List[str]] = None,
+    gene_symbol: Union[str, List[str]] = None,
+    disease: Union[str, List[str]] = None,
+    source: Union[str, List[str]] = None,
+    min_score: float = None,
+    max_score: float = None,
+    min_ei: float = None,
+    max_ei: float = None,
+    min_dsi: float = None,
+    max_dsi: float = None,
+    min_dpi: float = None,
+    max_dpi: float = None,
+    dis_class_list: Union[str, List[str]] = None,
+    page_number: int = None,
+) -> NamedTuple(
+    "VariantDiseaseAssociation",
+    [
+        ("variantid", str),
+        ("gene_symbol", Tuple[str]),
+        ("variant_dsi", float),
+        ("variant_dpi", float),
+        ("variant_consequence_type", str),
+        ("diseaseid", str),
+        ("disease_name", str),
+        ("disease_classes_do", Tuple[str]),
+        ("disease_classes_hpo", Tuple[str]),
+        ("disease_classes_msh", Tuple[str]),
+        ("disease_classes_umls_st", Tuple[str]),
+        ("disease_type", str),
+        ("score", float),
+        ("ei", float),
+        ("year_initial", int),
+        ("year_final", int),
+        ("source", str),
+    ],
+):
+        """
+        Returns Variant-Disease Associations (aggregated summary), narrowed
+        to the fields the old get_vdas_by_variants/genes/diseases/source()
+        functions returned.
+
+        disease_type is now populated from the API's "diseaseType" field.
+        It was previously hardcoded to None based on an incorrect reading
+        of the response schema; confirmed via real test data (e.g.
+        disease_type='phenotype' for a real query) that this field is
+        actually present in /vda/summary's response.
+
+        disease_class_name is not included: same situation as in
+        get_dda/get_gda_summary - the old API had a separate class-name
+        field, the new API only returns the combined "name (code)" string
+        in disease_class.
+
+        @variant: Union[str, List[str]]
+            Variant (dbSNP Identifier) or list of variants, up to 100.
+        @gene_ncbi_id / @gene_symbol: Union[str, List[str]]
+            Gene identifier(s); the old "gene" param accepted either NCBI
+            ID or HGNC symbol, the new API splits these into two params.
+        @disease: Union[str, List[str]]
+            Disease id(s) with vocabulary prefix, e.g. "UMLS_C0005745".
+        @source: Union[str, List[str]]
+            Source of the VDA.
+        @min_score/@max_score, @min_ei/@max_ei, @min_dsi/@max_dsi,
+        @min_dpi/@max_dpi: float
+            Score ranges, in [0,1].
+        @dis_class_list: Union[str, List[str]]
+            MeSH Disease Classes - corresponds to the old "disease_class"
+            param.
+        @page_number: int
+            Page number - corresponds to the old "limit" param (100 per
+            page; TRIAL accounts are capped at the top-30 results and do
+            not support pagination).
+        """
+
+        url = f"{self._api_url}/vda/summary"
+        get_params = dict()
+
         if variant != None:
-            variant = self._list_to_str(variant, "variant ID", limit=100)
-        
-        if gene != None:
-            gene = self._list_to_str(gene, "gene ID")
-        
-        return _get_evidences(
-            of="vda",
-            by="disease",
-            gene = gene,
-            disease = disease,
-            variant = variant,
-            source = source,
-            min_year = min_year,
-            max_year = max_year,
-            min_score = min_score,
-            max_score = max_score,
-            limit = limit,
-            offset = offset,
-            get_all = get_all
-        )
-    
-    def get_gda_evidences_by_gene(
-        gene,
-        disease=None,
-        source: str = None,
-        min_year: int = None,
-        max_year: int = None,
-        min_score: float = None,
-        max_score: float = None,
-        limit: int = None,
-        offset: int = None,
-        get_all: bool = True
-    ):
-        
-        gene = self._list_to_str(gene, "gene ID", limit=100)
-        
+            get_params["variant"] = self._list_to_str(variant, "Variant ID", limit=100)
+
+        if gene_ncbi_id != None:
+            get_params["gene_ncbi_id"] = self._list_to_str(gene_ncbi_id, "Gene NCBI ID", limit=100)
+
+        if gene_symbol != None:
+            get_params["gene_symbol"] = self._list_to_str(gene_symbol, "Gene Symbol", limit=100)
+
         if disease != None:
-            disease = self._list_to_str(disease, "disease ID", limit=100)
-        
-        return _get_evidences(
-            of="gda",
-            by="gene",
-            gene = gene,
-            disease = disease,
-            variant = None,
-            source = source,
-            min_year = min_year,
-            max_year = max_year,
-            min_score = min_score,
-            max_score = max_score,
-            limit = limit,
-            offset = offset,
-            get_all = get_all
-        )
-    
-    def get_gda_evidences_by_disease(
-        disease,
-        gene=None,
-        source: str = None,
-        min_year: int = None,
-        max_year: int = None,
-        min_score: float = None,
-        max_score: float = None,
-        limit: int = None,
-        offset: int = None,
-        get_all: bool = True
-    ):
-        
-        disease = self._list_to_str(disease, "disease ID", limit=100)
-        
-        if gene != None:
-            gene = self._list_to_str(gene, "gene ID", limit=100)
-        
-        return _get_evidences(
-            of="vda",
-            by="disease",
-            gene = gene,
-            disease = disease,
-            variant = None,
-            source = source,
-            min_year = min_year,
-            max_year = max_year,
-            min_score = min_score,
-            max_score = max_score,
-            limit = limit,
-            offset = offset,
-            get_all = get_all
-        )
-
-    def _get_ddas(
-        self,
-        disease: Union[str, List[str]],
-        share: str = None,
-        vocabulary: str = None,
-        source: str = None,
-        p_value: float = None,
-        limit: int = 10,
-    ) -> NamedTuple(
-        "DiseaseDiseaseAssociation",
-        [
-            ("disease1_name", str),
-            ("disease2_name", str),
-            ("disease1_nshare", int),
-            ("disease2_nshare", int),
-            ("disease1_disease_class", Tuple[str]),
-            ("disease2_disease_class", Tuple[str]),
-            ("disease1_disease_class_name", Tuple[str]),
-            ("disease2_disease_class_name", Tuple[str]),
-            ("jaccard_share", float),
-            ("pvalue_jaccard_share", float),
-            ("source", str),
-            ("ngenes1", int),
-            ("ngenes2", int),
-            ("nshare", int),
-            ("nvariants1", int),
-            ("nvariants2", int),
-            ("diseaseid1", str),
-            ("diseaseid2", str),
-        ],
-    ):
-        """
-        Returns Disease-Disease Associations with given query.
-
-        @disease: Union[str, List[str]]
-            if vocabulary is given:
-                Disease id (ICD9CM, ICD10,MeSH, OMIM, DO, EFO,
-                NCI, HPO, MONDO, or ORDO identifier) or list of disease ids
-            else:
-                Disease id (UMLS CUI) or list of disease ids
-        @share: str
-            Return associations that share:
-            Avaliable values : genes, variants
-        @vocabulary: str
-            Disease Vocabulary.
-            Available values : icd9cm, icd10, mesh, omim, do, efo,
-            nci, hpo, mondo, ordo
-        @source: str
-            Source of the DDA.
-            Available values : CURATED, INFERRED, ANIMAL_MODELS, ALL, BEFREE,
-            CGI, CLINGEN, CLINVAR, CTD_human, CTD_mouse, CTD_rat, GENOMICS_ENGLAND,
-            GWASCAT, GWASDB, HPO, LHGDN, MGD, ORPHANET, PSYGENET, RGD, UNIPROT
-        @p_value: float
-            p value associated to the Jaccard Index based on the shared genes.
-        @limit: int
-            Number of associated diseases to retrieve.
-            Default value : 10
-        """
-
-        disease = self._list_to_str(disease, "disease ID", limit=100)
-
-        url = f"{self._api_url}/dda/{share}/disease/"
-
-        if vocabulary != None:
-            url += f"{vocabulary}/"
-
-        url += disease
-        get_params = dict()
-        # headers = dict()
-
-        if source != None:
-            get_params["source"] = source
-
-        if p_value != None:
-            get_params["pvalue"] = str(p_value)
-
-        get_params["limit"] = str(max(1, min(limit, 100)))
-
-        result = self._retrieve_data(url, get_params)
-
-        if result == None:
-            return None
-
-        DiseaseDiseaseAssociation = collections.namedtuple(
-            "DiseaseDiseaseAssociation",
-            [
-                "disease1_name",
-                "disease2_name",
-                f"disease1_n{share}",
-                f"disease2_n{share}",
-                "disease1_disease_class",
-                "disease2_disease_class",
-                "disease1_disease_class_name",
-                "disease2_disease_class_name",
-                f"jaccard_{share}",
-                f"pvalue_jaccard_{share}",
-                "source",
-                "ngenes1",
-                "ngenes2",
-                f"n{share}",
-                "nvariants1",
-                "nvariants2",
-                "diseaseid1",
-                "diseaseid2",
-            ],
-        )
-
-        for index, entry in enumerate(result):
-            result[index] = DiseaseDiseaseAssociation(
-                self._get_string(entry["disease1_name"]),
-                self._get_string(entry["disease2_name"]),
-                self._get_int(entry[f"disease1_n{share}"]),
-                self._get_int(entry[f"disease2_n{share}"]),
-                self._get_tuple(entry["disease1_disease_class"], ";"),
-                self._get_tuple(entry["disease2_disease_class"], ";"),
-                self._get_tuple(entry["disease1_disease_class_name"], ";"),
-                self._get_tuple(entry["disease2_disease_class_name"], ";"),
-                self._get_float(entry[f"jaccard_{share}"]),
-                self._get_float(entry[f"pvalue_jaccard_{share}"]),
-                self._get_string(entry["source"]),
-                self._get_int(entry["ngenes1"]),
-                self._get_int(entry["ngenes2"]),
-                self._get_int(entry[f"n{share}"]),
-                self._get_int(entry["nvariants1"]),
-                self._get_int(entry["nvariants2"]),
-                self._get_string(entry["diseaseid1"]),
-                self._get_string(entry["diseaseid2"]),
-            )
-
-        return result
-
-    def _get_vdas(
-        self,
-        gene: Union[str, List[str]] = None,
-        disease: Union[str, List[str]] = None,
-        variant: Union[str, List[str]] = None,
-        vocabulary: str = None,
-        by: str = None,
-        source: str = None,
-        min_score: float = None,
-        max_score: float = None,
-        min_ei: float = None,
-        max_ei: float = None,
-        disease_type: str = None,
-        disease_class: Union[str, List[str]] = None,
-        min_dsi: float = None,
-        max_dsi: float = None,
-        min_dpi: float = None,
-        max_dpi: float = None,
-        limit: int = None,
-    ) -> NamedTuple(
-        "VariantDiseaseAssociation",
-        [
-            ("variantid", str),
-            ("gene_symbol", str),
-            ("variant_dsi", float),
-            ("variant_dpi", float),
-            ("variant_consequence_type", str),
-            ("diseaseid", str),
-            ("disease_name", str),
-            ("disease_class", Tuple[str]),
-            ("disease_class_name", Tuple[str]),
-            ("disease_type", str),
-            ("disease_semantic_type", str),
-            ("score", float),
-            ("ei", float),
-            ("year_initial", int),
-            ("year_final", int),
-            ("source", str),
-        ],
-    ):
-        """
-        Returns Variant-Disease Associations with given query.
-
-        @gene: Union[str, List[str]]
-            Gene (NCBI Entrez Identifier or HGNC Symbol) or list of genes.
-        @disease: Union[str, List[str]]
-            if vocabulary is given:
-                Disease id (ICD9CM, ICD10, MeSH, OMIM, DO, EFO, NCI, HPO, MONDO,
-                or ORDO identifier) or list of disease ids.
-            else:
-                Disease id (UMLS CUI) or list of diseases.
-        @variant: Union[str, List[str]]
-            Variant (dbSNP Identifier) or list of variants.
-        @vocabulary: str
-            Disease Vocabulary.
-            Available values : icd9cm, icd10, mesh, omim, do, efo, nci, hpo, mondo, ordo
-        @by: str
-            Return associations by:
-            Avaliable values : gene, disease, variant, source
-        @source: str
-            Source of the VDA.
-            Available values : CURATED, BEFREE, ALL, CLINVAR, GWASCAT, GWASDB, UNIPROT
-        @min_score: float
-            Min value of the variant-disease score range.
-        @max_score: float
-            Max value of the variant-disease score range.
-        @min_ei: float
-            Min value of the evidence index range.
-        @max_ei: float
-            Max value of the evidence index range.
-        @disease_type: str
-            DisGeNET Disease Type.
-            Available values : disease, phenotype, group
-        @disease_class: Union[str, List[str]]
-            MeSH Disease Classes
-            Available values : C01, C04, C05, C06, C07, C08, C09, C10, C11, C12,
-            C13, C14, C15, C16, C17, C18, C19, C20, C21, C22, C23, C24, C25, C26,
-            F01, F02, F03
-        @min_dsi: float
-            Min value of the DSI range for the variant.
-        @max_dsi: float
-            Max value of the DSI range for the variant.
-        @min_dpi: float
-            Min value of the DPI range for the variant.
-        @max_dpi: float
-            Max value of the DPI range for the variant.
-        @limit: int
-            Number of VDAs to retrieve.
-        """
-
-        url = f"{self._api_url}/vda/"
-        get_params = dict()
-
-        if by == "gene" and gene != None:
-            url += f"gene/{gene}"
-
-            if disease != None:
-                get_params["disease"] = disease
-
-            if variant != None:
-                get_params["variant"] = variant
-
-        elif by == "disease" and disease != None:
-            if vocabulary != None:
-                url += f"disease/{vocabulary}/{disease}"
-
-            else:
-                url += f"disease/{disease}"
-
-            if gene != None:
-                get_params["gene"] = gene
-
-            if variant != None:
-                get_params["variant"] = variant
-
-        elif by == "variant" and variant != None:
-            url += f"variant/{variant}"
-
-            if disease != None:
-                get_params["disease"] = disease
-
-            if gene != None:
-                get_params["gene"] = gene
-
-        elif by == "source":
-            url += f"source/{source}"
-
-            if disease != None:
-                get_params["disease"] = disease
-
-            if variant != None:
-                get_params["variant"] = variant
-
-            if gene != None:
-                get_params["gene"] = gene
-        else:
-            print("Problem in function call. Check arguments.")
-
-            return None
+            get_params["disease"] = self._list_to_str(disease, "Disease ID", limit=100)
 
         if source != None:
             get_params["source"] = source
@@ -1554,15 +222,6 @@ class DisgenetApi:
         if max_ei != None:
             get_params["max_ei"] = str(max_ei)
 
-        if min_score != None:
-            get_params["min_score"] = str(min_score)
-
-        if disease_type != None:
-            get_params["type"] = disease_type
-
-        if disease_class != None:
-            get_params["disease_class"] = disease_class
-
         if min_dsi != None:
             get_params["min_dsi"] = str(min_dsi)
 
@@ -1575,8 +234,11 @@ class DisgenetApi:
         if max_dpi != None:
             get_params["max_dpi"] = str(max_dpi)
 
-        if limit != None:
-            get_params["limit"] = str(max(1, limit))
+        if dis_class_list != None:
+            get_params["dis_class_list"] = dis_class_list
+
+        if page_number != None:
+            get_params["page_number"] = str(page_number)
 
         result = self._retrieve_data(url, get_params)
 
@@ -1593,10 +255,11 @@ class DisgenetApi:
                 "variant_consequence_type",
                 "diseaseid",
                 "disease_name",
-                "disease_class",
-                "disease_class_name",
+                "disease_classes_do",
+                "disease_classes_hpo",
+                "disease_classes_msh",
+                "disease_classes_umls_st",
                 "disease_type",
-                "disease_semantic_type",
                 "score",
                 "ei",
                 "year_initial",
@@ -1607,64 +270,78 @@ class DisgenetApi:
 
         for index, entry in enumerate(result):
             result[index] = VariantDiseaseAssociation(
-                self._get_string(entry["variantid"]),
-                self._get_string(entry["gene_symbol"]),
-                self._get_float(entry["variant_dsi"]),
-                self._get_float(entry["variant_dpi"]),
-                self._get_string(entry["variant_consequence_type"]),
-                self._get_string(entry["diseaseid"]),
-                self._get_string(entry["disease_name"]),
-                self._get_tuple(entry["disease_class"], ";"),
-                self._get_tuple(entry["disease_class_name"], ";"),
-                self._get_string(entry["disease_type"]),
-                self._get_string(entry["disease_semantic_type"]),
-                self._get_float(entry["score"]),
-                self._get_float(entry["ei"]),
-                self._get_int(entry["year_initial"]),
-                self._get_int(entry["year_final"]),
-                self._get_string(entry["source"]),
+                self._get_string(entry.get("variantStrID")),
+                tuple(entry["geneSymbol_keyword"]) if entry.get("geneSymbol_keyword") else None,
+                self._get_float(entry.get("variantDSI")),
+                self._get_float(entry.get("variantDPI")),
+                self._get_string(entry.get("mostSevereConsequences")),
+                self._get_string(entry.get("diseaseUMLSCUI")),
+                self._get_string(entry.get("diseaseName")),
+                tuple(entry["diseaseClasses_DO"]) if entry.get("diseaseClasses_DO") else None,
+                tuple(entry["diseaseClasses_HPO"]) if entry.get("diseaseClasses_HPO") else None, # Likely None for most records, but keeping the field since it may be populated depending on the variant/gene - didn't want to silently drop this classification data.
+                tuple(entry["diseaseClasses_MSH"]) if entry.get("diseaseClasses_MSH") else None,
+                tuple(entry["diseaseClasses_UMLS_ST"]) if entry.get("diseaseClasses_UMLS_ST") else None,
+                self._get_string(entry.get("diseaseType")),
+                self._get_float(entry.get("score")),
+                self._get_float(entry.get("ei")),
+                self._get_int(entry.get("yearInitial")),
+                self._get_int(entry.get("yearFinal")),
+                self._get_string(entry.get("source")),
             )
 
         return result
 
-    def _get_gdas(
+    
+    # get_gdas_by_genes(), get_gdas_by_diseases(), get_gdas_by_uniprots(),
+    # get_gdas_by_source(), and _get_gdas() were removed. These functions
+    # existed to select a "by" routing mode (gene, disease, uniprot,
+    # source) for the old path-based /gda/{by}/... endpoint, where each
+    # identifier type required a different URL. The new API has a single
+    # fixed endpoint (/gda/summary) where gene, disease, uniprot, source,
+    # etc. are all just optional query parameters on the same call, so
+    # there's no more separate URL/routing per identifier type. Replaced
+    # by the single get_gda_summary() function below, which accepts all
+    # identifier types and filters at once. This mirrors the same removal
+    # already done for the VDA summary functions (get_vdas_by_*/_get_vdas).
+    def get_gda_summary(
         self,
-        gene: Union[str, List[str]] = None,
+        gene_ncbi_id: Union[str, List[str]] = None,
+        gene_ensembl_id: Union[str, List[str]] = None,
+        gene_symbol: Union[str, List[str]] = None,
+        uniprot_id: Union[str, List[str]] = None,
         disease: Union[str, List[str]] = None,
-        uniprot: Union[str, List[str]] = None,
-        vocabulary: str = None,
-        by: str = None,
-        source: str = None,
+        source: Union[str, List[str]] = None,
         min_score: float = None,
         max_score: float = None,
         min_ei: float = None,
         max_ei: float = None,
-        disease_type: str = None,
-        disease_class: Union[str, List[str]] = None,
         min_dsi: float = None,
         max_dsi: float = None,
         min_dpi: float = None,
         max_dpi: float = None,
         min_pli: float = None,
         max_pli: float = None,
-        limit: int = None,
+        type: str = None,
+        dis_class_list: Union[str, List[str]] = None,
+        page_number: int = None,
     ) -> NamedTuple(
         "GeneDiseaseAssociation",
         [
             ("geneid", int),
             ("gene_symbol", str),
-            ("uniprotid", str),
+            ("uniprotid", Tuple[str]),
             ("gene_dsi", float),
             ("gene_dpi", float),
             ("gene_pli", float),
-            ("protein_class", str),
-            ("protein_class_name", str),
+            ("protein_class", Tuple[str]),
+            ("protein_class_name", Tuple[str]),
             ("diseaseid", str),
             ("disease_name", str),
-            ("disease_class", Tuple[str]),
-            ("disease_class_name", Tuple[str]),
+            ("disease_classes_do", Tuple[str]),
+            ("disease_classes_hpo", Tuple[str]),
+            ("disease_classes_msh", Tuple[str]),
+            ("disease_classes_umls_st", Tuple[str]),
             ("disease_type", str),
-            ("disease_semantic_type", str),
             ("score", float),
             ("ei", float),
             ("el", str),
@@ -1674,101 +351,51 @@ class DisgenetApi:
         ],
     ):
         """
-        Returns Gene-Disease Associations with given query.
+        Returns Gene-Disease Associations (aggregated summary), narrowed
+        to the fields the old get_gdas_by_genes/diseases/uniprots/source()
+        functions returned.
 
-        @gene: Union[str, List[str]]
-            Gene (NCBI Entrez Identifier or HGNC Symbol) or list of genes.
+        @gene_ncbi_id / @gene_ensembl_id / @gene_symbol: Union[str, List[str]]
+            Gene identifier(s) in the respective vocabulary, up to 100.
+        @uniprot_id: Union[str, List[str]]
+            Uniprot accession(s), up to 100.
         @disease: Union[str, List[str]]
-            if vocabulary is given:
-                Disease id (ICD9CM, ICD10, MeSH, OMIM, DO, EFO, NCI, HPO, MONDO,
-                or ORDO identifier) or list of disease ids.
-            else:
-                Disease id (UMLS CUI) or list of diseases.
-        @uniprot: Union[str, List[str]]
-            Disease id (UMLS CUI) or list of disease ids.
-        @vocabulary: str
-            Disease Vocabulary.
-            Available values : icd9cm, icd10, mesh, omim, do, efo, nci, hpo, mondo, ordo
-        @by: str
-            Return associations by:
-            Avaliable values : gene, disease, uniprot, source
-        @source: str
+            Disease id(s) with vocabulary prefix, e.g. "UMLS_C0005745".
+        @source: Union[str, List[str]]
             Source of the GDA.
-            Available values : CURATED, INFERRED, ANIMAL_MODELS, ALL, BEFREE, CGI, CLINGEN,
-            CLINVAR, CTD_human, CTD_mouse, CTD_rat, GENOMICS_ENGLAND, GWASCAT, GWASDB, HPO,
-            LHGDN, MGD, ORPHANET, PSYGENET, RGD, UNIPROT
-        @min_score: float
-            Min value of the gene-disease score range.
-        @max_score: float
-            Max value of the gene-disease score range.
-        @min_ei: float
-            Min value of the evidence index range.
-        @max_ei: float
-            Max value of the evidence index range.
-        @disease_type: str
-            DisGeNET Disease Type.
-            Available values : disease, phenotype, group
-        @disease_class: Union[str, List[str]]
-            MeSH Disease Classes
-            Available values : C01, C04, C05, C06, C07, C08, C09, C10, C11, C12,
-            C13, C14, C15, C16, C17, C18, C19, C20, C21, C22, C23, C24, C25, C26,
-            F01, F02, F03
-        @min_dsi: float
-            Min value of the DSI range for the gene.
-        @max_dsi: float
-            Max value of the DSI range for the gene.
-        @min_dpi: float
-            Min value of the DPI range for the gene.
-        @max_dpi: float
-            Max value of the DPI range for the gene.
-        @min_pli: float
-            Min value of the pLI range.
-        @max_pli: float
-            Max value of the pLI range.
-        @limit: int
-            Number of GDAs to retrieve.
+        @min_score/@max_score, @min_ei/@max_ei, @min_dsi/@max_dsi,
+        @min_dpi/@max_dpi, @min_pli/@max_pli: float
+            Score ranges, in [0,1].
+        @type: str
+            DisGeNET Disease Type ("disease", "phenotype", "group").
+        @dis_class_list: Union[str, List[str]]
+            MeSH Disease Classes - corresponds to the old "disease_class"
+            param.
+        @page_number: int
+            Page number - corresponds to the old "limit" param (100 per
+            page; TRIAL accounts are capped at the top-30 results and do
+            not support pagination).
         """
-        
-        url = f"{self._api_url}/gda/"
+
+        url = f"{self._api_url}/gda/summary"
         get_params = dict()
 
-        if by == "gene" and gene != None:
-            url += f"gene/{gene}"
+        if gene_ncbi_id != None:
+            get_params["gene_ncbi_id"] = self._list_to_str(gene_ncbi_id, "Gene NCBI ID", limit=100)
 
-            if disease != None:
-                get_params["disease"] = disease
+        if gene_ensembl_id != None:
+            get_params["gene_ensembl_id"] = self._list_to_str(gene_ensembl_id, "Gene Ensembl ID", limit=100)
 
-        elif by == "disease" and disease != None:
-            if vocabulary != None:
-                url += f"disease/{vocabulary}/{disease}"
+        if gene_symbol != None:
+            get_params["gene_symbol"] = self._list_to_str(gene_symbol, "Gene Symbol", limit=100)
 
-            else:
-                url += f"disease/{disease}"
+        if uniprot_id != None:
+            get_params["uniprot_id"] = self._list_to_str(uniprot_id, "Uniprot ID", limit=100)
 
-            if gene != None:
-                get_params["gene"] = gene
+        if disease != None:
+            get_params["disease"] = self._list_to_str(disease, "Disease ID", limit=100)
 
-        elif by == "uniprot" and uniprot != None:
-            url += f"gene/uniprot/{uniprot}"
-
-            if disease != None:
-                get_params["disease"] = disease
-
-        elif by == "source" and source != None:
-            url += f"source/{source}"
-
-            if gene != None:
-                get_params["gene"] = gene
-
-            if disease != None:
-                get_params["disease"] = disease
-
-        else:
-            print("Problem in function call. Check arguments.")
-
-            return None
-
-        if by != "source" and source != None:
+        if source != None:
             get_params["source"] = source
 
         if min_score != None:
@@ -1782,15 +409,6 @@ class DisgenetApi:
 
         if max_ei != None:
             get_params["max_ei"] = str(max_ei)
-
-        if min_score != None:
-            get_params["min_score"] = str(min_score)
-
-        if disease_type != None:
-            get_params["type"] = disease_type
-
-        if disease_class != None:
-            get_params["disease_class"] = disease_class
 
         if min_dsi != None:
             get_params["min_dsi"] = str(min_dsi)
@@ -1810,9 +428,15 @@ class DisgenetApi:
         if max_pli != None:
             get_params["max_pli"] = str(max_pli)
 
-        if limit != None:
-            get_params["limit"] = str(max(1, limit))
-        
+        if type != None:
+            get_params["type"] = type
+
+        if dis_class_list != None:
+            get_params["dis_class_list"] = dis_class_list
+
+        if page_number != None:
+            get_params["page_number"] = str(page_number)
+
         result = self._retrieve_data(url, get_params)
 
         if result == None:
@@ -1831,10 +455,11 @@ class DisgenetApi:
                 "protein_class_name",
                 "diseaseid",
                 "disease_name",
-                "disease_class",
-                "disease_class_name",
+                "disease_classes_do",
+                "disease_classes_hpo",
+                "disease_classes_msh",
+                "disease_classes_umls_st",
                 "disease_type",
-                "disease_semantic_type",
                 "score",
                 "ei",
                 "el",
@@ -1846,85 +471,109 @@ class DisgenetApi:
 
         for index, entry in enumerate(result):
             result[index] = GeneDiseaseAssociation(
-                self._get_int(entry["geneid"]),
-                self._get_string(entry["gene_symbol"]),
-                self._get_string(entry["uniprotid"]),
-                self._get_float(entry["gene_dsi"]),
-                self._get_float(entry["gene_dpi"]),
-                self._get_float(entry["gene_pli"]),
-                self._get_string(entry["protein_class"]),
-                self._get_string(entry["protein_class_name"]),
-                self._get_string(entry["diseaseid"]),
-                self._get_string(entry["disease_name"]),
-                self._get_tuple(entry["disease_class"], ";"),
-                self._get_tuple(entry["disease_class_name"], ";"),
-                self._get_string(entry["disease_type"]),
-                self._get_string(entry["disease_semantic_type"]),
-                self._get_float(entry["score"]),
-                self._get_float(entry["ei"]),
-                self._get_string(entry["el"]),
-                self._get_int(entry["year_initial"]),
-                self._get_int(entry["year_final"]),
-                self._get_string(entry["source"]),
+                self._get_int(entry.get("geneNcbiID")),
+                self._get_string(entry.get("symbolOfGene")),
+                tuple(entry["geneProteinStrIDs"]) if entry.get("geneProteinStrIDs") else None,
+                self._get_float(entry.get("geneDSI")),
+                self._get_float(entry.get("geneDPI")),
+                self._get_float(entry.get("genepLI")),
+                tuple(entry["geneProteinClassIDs"]) if entry.get("geneProteinClassIDs") else None,
+                tuple(entry["geneProteinClassNames"]) if entry.get("geneProteinClassNames") else None,
+                self._get_string(entry.get("diseaseUMLSCUI")),
+                self._get_string(entry.get("diseaseName")),
+                tuple(entry["diseaseClasses_DO"]) if entry.get("diseaseClasses_DO") else None,
+                tuple(entry["diseaseClasses_HPO"]) if entry.get("diseaseClasses_HPO") else None,
+                tuple(entry["diseaseClasses_MSH"]) if entry.get("diseaseClasses_MSH") else None,
+                tuple(entry["diseaseClasses_UMLS_ST"]) if entry.get("diseaseClasses_UMLS_ST") else None,
+                self._get_string(entry.get("diseaseType")),
+                self._get_float(entry.get("score")),
+                self._get_float(entry.get("ei")),
+                self._get_string(entry.get("el")),
+                self._get_int(entry.get("yearInitial")),
+                self._get_int(entry.get("yearFinal")),
+                self._get_string(entry.get("source")),
             )
 
         return result
 
-    def _get_evidences(
+    
+        
+    # get_vda_evidences_by_variant() and get_vda_evidences_by_disease() were
+    # removed. They existed only to select a "by" routing mode for the old
+    # path-based /vda/evidences/{by}/... endpoint. The new API has a single
+    # fixed endpoint (/vda/evidence). Replaced by get_vda_evidence() below,
+    # which keeps only the params the old functions/​_get_evidences() used
+    # (variant/gene/disease, source, min/max_year, min/max_score,
+    # limit/offset) rather than the full param set the new endpoint
+    # supports. Like the old code, this does not convert results into a
+    # namedtuple - it returns the raw list of record dicts as-is.
+    def get_vda_evidence(
         self,
-        of: ["gda" ,"vda"],
-        by: ["gene", "disease", "variant"],
-        gene: [str, [str]] = None,
-        disease: [str, [str]] = None,
-        variant: [str, [str]] = None,
-        source: str = None,
-        min_year: int = None,
-        max_year: int = None,
+        variant: Union[str, List[str]] = None,
+        gene_ncbi_id: Union[str, List[str]] = None,
+        gene_symbol: Union[str, List[str]] = None,
+        disease: Union[str, List[str]] = None,
+        source: Union[str, List[str]] = None,
+        min_pmYear: str = None,
+        max_pmYear: str = None,
         min_score: float = None,
         max_score: float = None,
-        limit: int = None,
-        offset: int = None,
-        get_all: bool = True
+        page_number: int = None,
     ):
-        url = f"{self._api_url}/{of}/evidences/{by}/"
+        """
+        Returns evidences that support Variant-Disease Associations.
+        Params narrowed to what the old get_vda_evidences_by_variant()/
+        get_vda_evidences_by_disease() (via _get_evidences()) used.
+
+        @variant: Union[str, List[str]]
+            Variant (dbSNP Identifier) or list of variants, up to 100.
+        @gene_ncbi_id / @gene_symbol: Union[str, List[str]]
+            Gene identifier(s); the old "gene" param accepted either.
+        @disease: Union[str, List[str]]
+            Disease id(s) with vocabulary prefix, e.g. "UMLS_C0005745".
+        @source: Union[str, List[str]]
+            Source of the VDA.
+        @min_pmYear/@max_pmYear: str
+            Publication year range - corresponds to the old
+            "min_year"/"max_year" params. The new API has both
+            min_timestamp/max_timestamp (evidence timestamp) and
+            min_pmYear/max_pmYear (publication year); mapped to the latter
+            as the closer match, but this is an assumption, not confirmed.
+        @min_score/@max_score: float
+            Variant-disease normalized score range, in [0,1].
+        @page_number: int
+            Page number - corresponds to the old "limit"/"offset" params.
+            The old code auto-looped through cursor-based pages
+            (data["next"]) when get_all=True; the new API paginates via
+            page_number instead of a cursor, and TRIAL accounts don't
+            support pagination at all, so the auto-loop was removed. This
+            returns a single page; call again with an incremented
+            page_number for more.
+        """
+
+        url = f"{self._api_url}/vda/evidence"
         get_params = dict()
-        
-        if of == "gda" and by == "gene" and gene != None:
-            url += gene
-            
-            if disease != None:
-                get_params["diasease"] = disease
-            
-        elif of == "vda" and by == "variant" and gene != None:
-            url += variant
-            
-            if gene != None:
-                get_params["gene"] = gene
-            
-            if disease != None:
-                get_params["disease"] = disease
-        
-        elif  by == "disease" and disease != None:
-            url += disease
-            
-            if gene != None:
-                get_params["gene"] = gene
-            
-            if of == "vda" and variant != None:
-                get_params["variant"] = variant
-        
-        else:
-            print("Problem in function call. Check arguments.")
-            return None
-        
+
+        if variant != None:
+            get_params["variant"] = self._list_to_str(variant, "Variant ID", limit=100)
+
+        if gene_ncbi_id != None:
+            get_params["gene_ncbi_id"] = self._list_to_str(gene_ncbi_id, "Gene NCBI ID", limit=100)
+
+        if gene_symbol != None:
+            get_params["gene_symbol"] = self._list_to_str(gene_symbol, "Gene Symbol", limit=100)
+
+        if disease != None:
+            get_params["disease"] = self._list_to_str(disease, "Disease ID", limit=100)
+
         if source != None:
             get_params["source"] = source
-        
-        if min_year != None:
-            get_params["min_year"] = str(min_year)
 
-        if max_year != None:
-            get_params["max_year"] = str(max_year)
+        if min_pmYear != None:
+            get_params["min_pmYear"] = min_pmYear
+
+        if max_pmYear != None:
+            get_params["max_pmYear"] = max_pmYear
 
         if min_score != None:
             get_params["min_score"] = str(min_score)
@@ -1932,23 +581,238 @@ class DisgenetApi:
         if max_score != None:
             get_params["max_score"] = str(max_score)
 
-        if limit != None:
-            get_params["limit"] = str(max(1, limit))
+        if page_number != None:
+            get_params["page_number"] = str(page_number)
+
+        return self._retrieve_data(url, get_params)
+
+
+    # get_gda_evidences_by_gene() and get_gda_evidences_by_disease() were
+    # removed, for the same reason as the VDA evidence functions above.
+    # Replaced by get_gda_evidence() below, same narrowed-param approach,
+    # same raw-passthrough (no namedtuple) behavior as the old code.
+    def get_gda_evidence(
+        self,
+        gene_ncbi_id: Union[str, List[str]] = None,
+        gene_symbol: Union[str, List[str]] = None,
+        disease: Union[str, List[str]] = None,
+        source: Union[str, List[str]] = None,
+        min_pmYear: str = None,
+        max_pmYear: str = None,
+        min_score: float = None,
+        max_score: float = None,
+        page_number: int = None,
+    ):
+        """
+        Returns evidences that support Gene-Disease Associations.
+        Params narrowed to what the old get_gda_evidences_by_gene()/
+        get_gda_evidences_by_disease() (via _get_evidences()) used.
+
+        @gene_ncbi_id / @gene_symbol: Union[str, List[str]]
+            Gene identifier(s); the old "gene" param accepted either.
+        @disease: Union[str, List[str]]
+            Disease id(s) with vocabulary prefix, e.g. "UMLS_C0005745".
+        @source: Union[str, List[str]]
+            Source of the GDA.
+        @min_pmYear/@max_pmYear: str
+            Publication year range - corresponds to the old
+            "min_year"/"max_year" params (same assumption noted in
+            get_vda_evidence above).
+        @min_score/@max_score: float
+            Gene-disease normalized score range, in [0,1].
+        @page_number: int
+            Page number - corresponds to the old "limit"/"offset" params
+            (same auto-loop removal noted in get_vda_evidence above).
+        """
+
+        url = f"{self._api_url}/gda/evidence"
+        get_params = dict()
+
+        if gene_ncbi_id != None:
+            get_params["gene_ncbi_id"] = self._list_to_str(gene_ncbi_id, "Gene NCBI ID", limit=100)
+
+        if gene_symbol != None:
+            get_params["gene_symbol"] = self._list_to_str(gene_symbol, "Gene Symbol", limit=100)
+
+        if disease != None:
+            get_params["disease"] = self._list_to_str(disease, "Disease ID", limit=100)
+
+        if source != None:
+            get_params["source"] = source
+
+        if min_pmYear != None:
+            get_params["min_pmYear"] = min_pmYear
+
+        if max_pmYear != None:
+            get_params["max_pmYear"] = max_pmYear
+
+        if min_score != None:
+            get_params["min_score"] = str(min_score)
+
+        if max_score != None:
+            get_params["max_score"] = str(max_score)
+
+        if page_number != None:
+            get_params["page_number"] = str(page_number)
+
+        return self._retrieve_data(url, get_params)
+    
+    
+    # get_gda_evidences_by_gene() and get_gda_evidences_by_disease() (and
+    # the "gda" branch of the shared _get_evidences()) were removed. They
+    # existed only to select a "by" routing mode (gene vs disease) for the
+    # old path-based /gda/evidences/{by}/... endpoint. The new API has a
+    # single fixed endpoint (/gda/evidence) where gene, disease, chemical,
+    # etc. are all just optional query parameters on the same call, so
+    # there's no more separate URL/routing per identifier type. Replaced
+    # by the single get_gda_evidence() function below, which accepts all
+    # identifier types at once. This also mirrors the same removal already
+    # done for get_vda_evidences_by_variant()/by_disease().
+
+    def get_dda(
+        self,
+        disease_1: Union[str, List[str]],
+        disease_2: Union[str, List[str]],
+        source: Union[str, List[str]] = None,
+        page_number: int = None,
+    ) -> NamedTuple(
+        "DiseaseDiseaseAssociation",
+        [
+            ("disease1_name", str),
+            ("disease2_name", str),
+            ("disease1_classes_do", Tuple[str]),
+            ("disease1_classes_hpo", Tuple[str]),
+            ("disease1_classes_msh", Tuple[str]),
+            ("disease1_classes_umls_st", Tuple[str]),
+            ("disease2_classes_do", Tuple[str]),
+            ("disease2_classes_hpo", Tuple[str]),
+            ("disease2_classes_msh", Tuple[str]),
+            ("disease2_classes_umls_st", Tuple[str]),
+            ("jaccard_genes", float),
+            ("pvalue_jaccard_genes", float),
+            ("jaccard_variants", float),
+            ("pvalue_jaccard_variants", float),
+            ("source", str),
+            ("ngenes1", int),
+            ("ngenes2", int),
+            ("nvariants1", int),
+            ("nvariants2", int),
+            ("shared_genes", int),
+            ("shared_variants", int),
+            ("diseaseid1", str),
+            ("diseaseid2", str),
+        ],
+    ):
+        """
+        Returns Disease-Disease Associations between disease_1 and disease_2.
+        Fields narrowed to the union of what the old
+        get_ddas_that_share_genes()/get_ddas_that_share_variants() returned;
+        the new API returns both gene-sharing and variant-sharing metrics
+        together in a single query, so both jaccard_genes and
+        jaccard_variants are always populated (the old code only returned
+        one or the other depending on which function was called). The old
+        duplicate fields disease1_ngenes/disease2_ngenes/disease1_nvariants/
+        disease2_nvariants (which held the same values as ngenes1/ngenes2/
+        nvariants1/nvariants2) were consolidated into the single generic
+        fields, since the new API only exposes one copy of each.
+
+        @disease_1 / @disease_2: Union[str, List[str]]
+            Disease id(s) with vocabulary prefix, e.g. "UMLS_C0005745".
+        @source: Union[str, List[str]]
+            Source of the DDA.
+        @page_number: int
+            Page number - corresponds to the old "limit" param (100 per
+            page; TRIAL accounts are capped at the top-10 results and do
+            not support pagination).
+        """
+
+        disease_1 = self._list_to_str(disease_1, "Disease 1 ID", limit=100)
+        disease_2 = self._list_to_str(disease_2, "Disease 2 ID", limit=100)
+
+        url = f"{self._api_url}/dda"
+        get_params = dict()
+
+        get_params["disease_1"] = disease_1
+        get_params["disease_2"] = disease_2
+
+        if source != None:
+            get_params["source"] = source
+
+        if page_number != None:
+            get_params["page_number"] = str(page_number)
+
+        result = self._retrieve_data(url, get_params)
+
+        if result == None:
+            return None
+
+        DiseaseDiseaseAssociation = collections.namedtuple(
+            "DiseaseDiseaseAssociation",
+            [
+                "disease1_name",
+                "disease2_name",
+                "disease1_classes_do",
+                "disease1_classes_hpo",
+                "disease1_classes_msh",
+                "disease1_classes_umls_st",
+                "disease2_classes_do",
+                "disease2_classes_hpo",
+                "disease2_classes_msh",
+                "disease2_classes_umls_st",
+                "jaccard_genes",
+                "pvalue_jaccard_genes",
+                "jaccard_variants",
+                "pvalue_jaccard_variants",
+                "source",
+                "ngenes1",
+                "ngenes2",
+                "nvariants1",
+                "nvariants2",
+                "shared_genes",
+                "shared_variants",
+                "diseaseid1",
+                "diseaseid2",
+            ],
+        )
+
+        for index, entry in enumerate(result):
+            result[index] = DiseaseDiseaseAssociation(
+                self._get_string(entry.get("disease1_Name")),
+                self._get_string(entry.get("disease2_Name")),
+                tuple(entry["disease1_Classes_DO"]) if entry.get("disease1_Classes_DO") else None,
+                tuple(entry["disease1_Classes_HPO"]) if entry.get("disease1_Classes_HPO") else None,
+                tuple(entry["disease1_Classes_MSH"]) if entry.get("disease1_Classes_MSH") else None,
+                tuple(entry["disease1_Classes_UMLS_ST"]) if entry.get("disease1_Classes_UMLS_ST") else None,
+                tuple(entry["disease2_Classes_DO"]) if entry.get("disease2_Classes_DO") else None,
+                tuple(entry["disease2_Classes_HPO"]) if entry.get("disease2_Classes_HPO") else None,
+                tuple(entry["disease2_Classes_MSH"]) if entry.get("disease2_Classes_MSH") else None,
+                tuple(entry["disease2_Classes_UMLS_ST"]) if entry.get("disease2_Classes_UMLS_ST") else None,
             
-        if offset != None:
-            get_params["offset"] = offset
-        
-        result = []
-        
-        while True:
-            data = self._retrieve_data(url, get_params)
-            result.extend(data["results"])
-            url = data["next"]
-            
-            if not get_all or url == None:
-                break
+                self._get_float(entry.get("jaccard_genes")),
+                self._get_float(entry.get("pvalue_jaccard_genes")),
+                self._get_float(entry.get("jaccard_variants")),
+                self._get_float(entry.get("pvalue_jaccard_variants")),
+                self._get_string(entry.get("source")),
+                self._get_int(entry.get("ngenes_diseaseID_1")),
+                self._get_int(entry.get("ngenes_diseaseID_2")),
+                self._get_int(entry.get("nvariants_diseaseID_1")),
+                self._get_int(entry.get("nvariants_diseaseID_2")),
+                self._get_int(entry.get("shared_genes")),
+                self._get_int(entry.get("shared_variants")),
+                self._get_string(entry.get("disease1_UMLSCUI")),
+                self._get_string(entry.get("disease2_UMLSCUI")),
+            )
 
         return result
+    # _get_evidences() was removed. It tried to share one generic function
+    # between GDA and VDA evidence retrieval using "of"/"by" flags for
+    # path-based routing (e.g. /vda/evidences/variant/...). The new API
+    # has separate, fixed endpoints (/gda/evidence, /vda/evidence) with
+    # much richer, endpoint-specific parameters (e.g. chromcoord, hgvsc,
+    # hgvsp, min_polyphen for VDA; uniprot_id, nct_phase for GDA), so a
+    # single shared function is no longer a good fit. 
+   
+    
 
     def _list_to_str(
         self, list_obj: List[str], name: str, limit: Optional[int] = None
@@ -1966,8 +830,10 @@ class DisgenetApi:
 
         if isinstance(list_obj, list):
             if limit != None and len(list_obj) > limit:
-                print(f"Maximum length of {name}'s are {limit}.")
-                print(f"First {limit} {name}'s will be used.")
+                _log(
+                    f"DisGeNET maximum length of {name}'s are {limit}, "
+                    f"first {limit} {name}'s will be used."
+                )
 
                 return ",".join(list_obj[:limit])
 
@@ -1975,8 +841,12 @@ class DisgenetApi:
 
         return list_obj
 
-    #@_if_authenticated
-    #@_delete_cache
+    # Re-enabling this decorator: it was previously commented out, which let
+    # _retrieve_data run with no valid api_key and silently send
+    # "Authorization: Bearer None" to the server. Now that authenticate()
+    # is fixed for the new API, this guard is safe to use again.
+    @_if_authenticated
+    @_delete_cache
     def _retrieve_data(
         self, url: str, get_params: Union[List[str], Dict[str, str]]
     ) -> List[Dict[str, str]]:
@@ -1991,24 +861,23 @@ class DisgenetApi:
 
         headers = ["accept: */*", f"Authorization: Bearer {self._api_key}"]
 
-        get_params_extend = list()
+        # Any param whose value is a Python list (e.g. source,
+        # dda_relation, dis_class_list) is expanded into repeated
+        # "key=value" entries, one per list item. This replaces the old
+        # code, which only special-cased a single param named
+        # "disease_class" (which no longer exists in the new API; it's
+        # now "dis_class_list") and would otherwise have serialized any
+        # other list param as a literal Python list string, e.g.
+        # "source=['CURATED', 'CLINVAR']", which the DisGeNET API does
+        # not parse correctly.
+        get_params_list = []
+        for key, value in get_params.items():
+            if isinstance(value, list):
+                get_params_list.extend([f"{key}={item}" for item in value])
+            else:
+                get_params_list.append(f"{key}={value}")
 
-        try:
-            if isinstance(get_params["disease_class"], list):
-                get_params_extend = [
-                    f"disease_class={value}" for value in get_params["disease_class"]
-                ]
-
-                del get_params["disease_class"]
-
-        except KeyError:
-            pass
-
-        get_params["format"] = "json"
-        get_params = [f"{key}={value}" for key, value in get_params.items()]
-
-        if get_params_extend:
-            get_params.extend(get_params_extend)
+        get_params = get_params_list
 
         c = curl.Curl(url=url, get=get_params, req_headers=headers)
 
@@ -2016,9 +885,17 @@ class DisgenetApi:
             result = c.result
             result = json.loads(result)
 
-            return result
+            # The new API wraps the actual records in a "payload" field
+            # alongside status/paging/warnings metadata. The old code
+            # returned the raw parsed JSON as-is, which worked because
+            # the old API's response body WAS the list of records
+            # directly. Every function below expects a plain list of
+            # record dicts, so we extract "payload" here.
+            return result.get("payload")
 
-        print(f"An error occurred with the code {c.status}")
+        _log(f"DisGeNET: an error occurred with the code {c.status}")
+        _log(f"DisGeNET response body: {repr(c.result)}")
+        _log(f"DisGeNET curl object: {vars(c)}")
 
     def _get_int(self, str_obj) -> int:
         """
@@ -2076,64 +953,38 @@ class DisgenetApi:
 
 
 @DisgenetApi._delete_cache
-def variant_gene_mappings() -> (
-    Dict[
-        str,
-        NamedTuple(
-            "VariantGeneMapping",
-            [
-                ("geneId", str),
-                ("geneSymbol", str),
-                ("sourceIds", Tuple[str]),
-            ],
-        ),
-    ]
-):
+def variant_gene_mappings(
+    api: "DisgenetApi",
+    gene_ncbi_ids: List[str],
+    batch_size: int = 10,
+) -> Dict[str, "VariantGeneMapping"]:
     """
-    Downloads and processes variant-gene mappings.
-    Returns a dict where the \'snpId\' is the key.
+    Builds the same {snpId: [VariantGeneMapping(geneId, geneSymbol,
+    sourceIds), ...]} structure the old bulk-download version produced,
+    but queries the new DisGeNET API instead (no bulk mapping file
+    exists anymore).
+
+    Unlike the old version (which took no arguments and downloaded the
+    full DisGeNET variant-gene mapping file), this now requires a list
+    of known NCBI Gene IDs to query against - e.g. from
+    uniprot_adapter.py's xref_geneid field (same source used for
+    disgenet_annotations()). This queries /entity/variant using
+    gene_ncbi_id, which returns each matching variant's own
+    variantToGenes field - a list of {geneNcbiID, symbolOfGene,
+    geneEnsemblID, sources} already grouped per variant, so no manual
+    grouping across rows is needed (unlike the old bulk file, where the
+    same snpId/geneId pair could appear on multiple rows with different
+    sourceId values that had to be accumulated by hand).
+
+    @api: DisgenetApi
+        An already-authenticated DisgenetApi instance.
+    @gene_ncbi_ids: List[str]
+        Known NCBI Gene (Entrez) IDs to query, e.g. ["672", "675", ...].
+    @batch_size: int
+        Number of gene IDs to send per request. Kept small (10) by
+        default to stay safe under TRIAL account limits while testing;
+        raise this once running under a full academic account.
     """
-
-    url = urls.urls["disgenet"]["variant_gene_mappings"]
-    c = curl.Curl(
-        url,
-        silent=False,
-        large=True,
-        encoding="utf-8",
-        default_mode="r",
-    )
-    reader = csv.DictReader(c.result, delimiter="\t")
-    mapping = dict()
-
-    for rec in reader:
-        snpId = rec.pop("snpId")
-
-        try:
-            match = False
-
-            for index, entry in enumerate(mapping[snpId]):
-                if (
-                    rec["geneId"] == entry["geneId"]
-                    and rec["geneSymbol"] == entry["geneSymbol"]
-                ):
-                    match = True
-
-                    if isinstance(mapping[snpId][index]["sourceId"], list):
-                        mapping[snpId][index]["sourceId"].append(rec["sourceId"])
-
-                    else:
-                        mapping[snpId][index]["sourceId"] = [
-                            mapping[snpId][index]["sourceId"],
-                            rec["sourceId"],
-                        ]
-
-                    break
-
-            if not match:
-                mapping[snpId].append(rec)
-
-        except KeyError:
-            mapping[snpId] = [rec]
 
     VariantGeneMapping = collections.namedtuple(
         "VariantGeneMapping",
@@ -2144,57 +995,98 @@ def variant_gene_mappings() -> (
         ],
     )
 
-    for key, values in mapping.items():
-        for index, value in enumerate(values):
-            mapping[key][index] = VariantGeneMapping(
-                value["geneId"],
-                value["geneSymbol"],
-                tuple(value["sourceId"]),
-            )
+    mapping = dict()
+
+    for i in range(0, len(gene_ncbi_ids), batch_size):
+        batch = gene_ncbi_ids[i : i + batch_size]
+        page_number = 0
+
+        while True:
+            url = f"{api._api_url}/entity/variant"
+            get_params = {
+                "gene_ncbi_id": batch,
+                "page_number": str(page_number),
+            }
+
+            result = api._retrieve_data(url, get_params)
+
+            if not result:
+                break
+
+            for entry in result:
+                snp_id = entry.get("strID")
+                variant_to_genes = entry.get("variantToGenes")
+
+                if snp_id == None or not variant_to_genes:
+                    continue
+
+                if snp_id not in mapping:
+                    mapping[snp_id] = []
+
+                for vtg in variant_to_genes:
+                    gene_id = vtg.get("geneNcbiID")
+                    gene_symbol = vtg.get("symbolOfGene")
+                    sources = vtg.get("sources")
+
+                    mapping[snp_id].append(
+                        VariantGeneMapping(
+                            api._get_string(gene_id) if gene_id != None else None,
+                            gene_symbol,
+                            tuple(sources) if sources else None,
+                        )
+                    )
+
+            if len(result) < 100:
+                break
+
+            page_number += 1
 
     return mapping
 
 
 @DisgenetApi._delete_cache
-def disease_id_mappings() -> (
-    dict[
-        str,
-        NamedTuple(
-            "DiseaseIdMapping",
-            [
-                ("name", str),
-                (
-                    "vocabularies",
-                    Tuple[
-                        NamedTuple(
-                            "Vocabulary",
-                            [
-                                ("vocabulary", str),
-                                ("code", str),
-                                ("vocabularyName", str),
-                            ],
-                        )
-                    ],
-                ),
-            ],
-        ),
-    ]
-):
+def disease_id_mappings(
+    api: "DisgenetApi",
+    mondo_ids: List[str],
+    batch_size: int = 10,
+) -> Dict[str, "DiseaseIdMapping"]:
     """
-    Downloads and processes disease-id mappings.
-    Returns a dict where the \'diseaseId\' is the key.
-    """
+    Builds the same {diseaseId: DiseaseIdMapping(name, vocabularies)}
+    structure the old bulk-download version produced, but queries the
+    new DisGeNET API instead (no bulk download endpoint exists anymore).
 
-    url = urls.urls["disgenet"]["disease_id_mappings"]
-    c = curl.Curl(
-        url,
-        silent=False,
-        large=True,
-        encoding="utf-8",
-        default_mode="r",
-    )
-    reader = csv.DictReader(c.result, delimiter="\t")
-    mapping = dict()
+    Unlike the old version (which took no arguments and downloaded the
+    full DisGeNET disease list), this now requires a list of known
+    MONDO disease IDs to query against - e.g. from disease_adapter.py's
+    MONDO ontology download. Each ID must be in the API's expected
+    format, e.g. "MONDO_0007254".
+
+    This is a standalone function (not a DisgenetApi method) so it
+    doesn't change how the class itself is called elsewhere; it takes
+    an already-authenticated DisgenetApi instance as a parameter
+    instead, and calls _retrieve_data directly rather than going
+    through get_gda_summary(), because get_gda_summary()'s narrowed
+    output (matching the old API's fields) doesn't include
+    diseaseVocabularies, which is exactly the field this function needs.
+
+    Note on data shape: /gda/summary returns one row per matching gene
+    for a queried disease, and every row repeats the same disease-level
+    diseaseVocabularies value. We only need that value once per
+    disease, so once a disease_id has been recorded we skip it on
+    subsequent rows - this does not lose any information, since this
+    function was never collecting gene data in the first place (same
+    as the old bulk-file version, which only ever returned name +
+    vocabularies per disease, no gene info).
+
+    @api: DisgenetApi
+        An already-authenticated DisgenetApi instance.
+    @mondo_ids: List[str]
+        Known MONDO disease IDs to query, e.g. ["MONDO_0007254", ...].
+    @batch_size: int
+        Number of disease IDs to send per request. Kept small (10) by
+        default to stay safe under TRIAL account limits while testing;
+        raise this once running under a full academic account.
+    """
 
     Vocabulary = collections.namedtuple(
         "Vocabulary",
@@ -2205,22 +1097,6 @@ def disease_id_mappings() -> (
         ],
     )
 
-    for rec in reader:
-        diseaseId = rec.pop("diseaseId")
-        name = rec.pop("name")
-        rec = Vocabulary(
-            rec["vocabulary"],
-            rec["code"],
-            rec["vocabularyName"],
-        )
-        try:
-            mapping[diseaseId]["vocabularies"].append(rec)
-
-        except KeyError:
-            mapping[diseaseId] = dict()
-            mapping[diseaseId]["name"] = name
-            mapping[diseaseId]["vocabularies"] = [rec]
-
     DiseaseIdMapping = collections.namedtuple(
         "DiseaseIdMapping",
         [
@@ -2229,26 +1105,134 @@ def disease_id_mappings() -> (
         ],
     )
 
-    for key, value in mapping.items():
-        mapping[key] = DiseaseIdMapping(
-            value["name"],
-            tuple(value["vocabularies"]),
-        )
+    mapping = dict()
+
+    for i in range(0, len(mondo_ids), batch_size):
+        batch = mondo_ids[i : i + batch_size]
+        page_number = 0
+
+        while True:
+            url = f"{api._api_url}/gda/summary"
+            get_params = {
+                "disease": batch,
+                "page_number": str(page_number),
+            }
+
+            result = api._retrieve_data(url, get_params)
+
+            if not result:
+                break
+
+            for entry in result:
+                disease_id = entry.get("diseaseUMLSCUI")
+                raw_vocabs = entry.get("diseaseVocabularies")
+
+                if disease_id == None or not raw_vocabs:
+                    continue
+
+                # A disease query returns one row per matching gene;
+                # every row repeats the same disease-level vocabulary
+                # info, so we only process the first occurrence.
+                if disease_id in mapping:
+                    continue
+
+                name = entry.get("diseaseName")
+                vocab_list = []
+
+                for raw in raw_vocabs:
+                    parts = raw.split("_", 1)
+
+                    if len(parts) != 2:
+                        continue
+
+                    vocabulary, code = parts
+                    vocab_list.append(
+                        Vocabulary(
+                            vocabulary,
+                            code,
+                            # The new API only returns short prefixes
+                            # (e.g. "MESH", "MONDO"), not the full
+                            # vocabulary name the old bulk file had
+                            # (e.g. "Medical Subject Headings"). No
+                            # equivalent field exists in the new API
+                            # or the web interface (checked disease
+                            # detail page - it also only shows short
+                            # labels like "MeSH Disease Class", not
+                            # the full vocabulary name), so this is
+                            # left as None rather than guessing.
+                            None,
+                        )
+                    )
+
+                mapping[disease_id] = DiseaseIdMapping(name, tuple(vocab_list))
+
+            if len(result) < 100:
+                break
+
+            page_number += 1
 
     return mapping
 
 
 @DisgenetApi._delete_cache
-def disgenet_annotations(dataset="curated"):
+def disgenet_annotations(
+    api: "DisgenetApi",
+    gene_ncbi_ids: List[str],
+    dataset: str = "curated",
+    batch_size: int = 10,
+) -> Dict[str, set]:
     """
-    Downloads and processes the list of all human disease related proteins
-    from DisGeNet.
-    Returns dict of dicts.
+    Builds the same {uniprot_id: {DisGeNetAnnotation(...), ...}} structure
+    the old bulk-download version produced, but queries the new DisGeNET
+    API instead (no bulk annotation files exist anymore - confirmed via
+    AIDA that curated_gene_disease_associations is no longer available).
 
-    @dataset : str
-        Name of DisGeNet dataset to be obtained:
-        `curated`, `literature`, `befree` or `all`.
+    Unlike the old version (which took no gene list and downloaded the
+    full DisGeNET file, then mapped gene symbols to UniProt via pypath's
+    own mapping.map_name()), this now requires a list of known NCBI Gene
+    IDs to query against - e.g. from uniprot_adapter.py's xref_geneid
+    field. The gene-symbol-to-UniProt translation step is no longer
+    needed: the new API already returns UniProt IDs directly in
+    geneProteinStrIDs, so we read those instead of calling pypath's
+    mapping module.
+
+    This calls _retrieve_data directly rather than get_gda_summary(),
+    because get_gda_summary()'s narrowed output (matching the old
+    _get_gdas() fields) doesn't include numPMIDs or
+    numDBSNPsupportingAssociation, which map to this function's
+    nof_pmids/nof_snps fields and aren't part of the old GDA shape.
+
+    @api: DisgenetApi
+        An already-authenticated DisgenetApi instance.
+    @gene_ncbi_ids: List[str]
+        Known NCBI Gene (Entrez) IDs to query, e.g. ["672", "675", ...].
+    @dataset: str
+        Only "curated" and "all" are supported (mapped to
+        source=["CURATED"] and no source filter, respectively). The old
+        "literature" and "befree" datasets have no clear 1:1 equivalent
+        in the new API's source list (BEFREE no longer exists; the
+        closest match, TEXTMINING_HUMAN/TEXTMINING_MODELS, isn't the
+        same grouping) - flagging this rather than guessing a mapping.
+    @batch_size: int
+        Number of gene IDs to send per request. Kept small (10) by
+        default to stay safe under TRIAL account limits while testing;
+        raise this once running under a full academic account.
     """
+
+    dataset_source_map = {
+        "curated": ["CURATED"],
+        "all": None,
+    }
+
+    if dataset not in dataset_source_map:
+        _log(
+            f"DisGeNET dataset='{dataset}' is not supported. Only 'curated' and "
+            "'all' are mapped to the new API's source filter; 'literature' "
+            "and 'befree' have no clear equivalent in the new source list."
+        )
+        return None
+
+    source = dataset_source_map[dataset]
 
     DisGeNetAnnotation = collections.namedtuple(
         "DisGeNetAnnotation",
@@ -2264,39 +1248,68 @@ def disgenet_annotations(dataset="curated"):
         ],
     )
 
-    url = urls.urls["disgenet"]["annotations"] % dataset
-    c = curl.Curl(
-        url,
-        silent=False,
-        large=True,
-        encoding="utf-8",
-        default_mode="r",
-    )
-    reader = csv.DictReader(c.result, delimiter="\t")
     data = collections.defaultdict(set)
 
-    for rec in reader:
-        uniprots = mapping.map_name(
-            rec["geneSymbol"],
-            "genesymbol",
-            "uniprot",
-        )
+    for i in range(0, len(gene_ncbi_ids), batch_size):
+        batch = gene_ncbi_ids[i : i + batch_size]
+        page_number = 0
 
-        if not uniprots:
-            continue
+        while True:
+            url = f"{api._api_url}/gda/summary"
+            get_params = {
+                "gene_ncbi_id": batch,
+                "page_number": str(page_number),
+            }
 
-        for uniprot in uniprots:
-            data[uniprot].add(
-                DisGeNetAnnotation(
-                    disease=rec["diseaseName"],
-                    type=rec["diseaseType"],
-                    score=float(rec["score"]),
-                    dsi=float(rec["DSI"]) if rec["DSI"] else None,
-                    dpi=float(rec["DPI"]) if rec["DPI"] else None,
-                    nof_pmids=int(rec["NofPmids"]),
-                    nof_snps=int(rec["NofSnps"]),
-                    source=tuple(x.strip() for x in rec["source"].split(";")),
+            if source != None:
+                get_params["source"] = source
+
+            result = api._retrieve_data(url, get_params)
+
+            if not result:
+                break
+
+            for entry in result:
+                uniprot_ids = entry.get("geneProteinStrIDs")
+
+                if not uniprot_ids:
+                    continue
+
+                disease = entry.get("diseaseName")
+                disease_type = entry.get("diseaseType")
+                score = entry.get("score")
+                dsi = entry.get("geneDSI")
+                dpi = entry.get("geneDPI")
+                nof_pmids = entry.get("numPMIDs")
+                nof_snps = entry.get("numDBSNPsupportingAssociation")
+
+                # The new /gda/summary response does not include a
+                # per-record source field (unlike the old API's
+                # GeneDiseaseAssociation, which had one). When a single
+                # source filter was requested (dataset="curated"), that
+                # filter is the only source these aggregated results
+                # could have come from, so we record it as such. For
+                # dataset="all" (no filter), the true per-record source
+                # is unknown, so this is left as None.
+                record_source = tuple(source) if source != None else None
+
+                annotation = DisGeNetAnnotation(
+                    disease,
+                    disease_type,
+                    api._get_float(score) if score != None else None,
+                    api._get_float(dsi) if dsi != None else None,
+                    api._get_float(dpi) if dpi != None else None,
+                    api._get_int(nof_pmids) if nof_pmids != None else None,
+                    api._get_int(nof_snps) if nof_snps != None else None,
+                    record_source,
                 )
-            )
+
+                for uniprot in uniprot_ids:
+                    data[uniprot].add(annotation)
+
+            if len(result) < 100:
+                break
+
+            page_number += 1
 
     return dict(data)
