@@ -130,7 +130,9 @@ uniprot_adapter = Uniprot(
 
 uniprot_adapter.download_uniprot_data(cache=CACHE, retries=6)
 
-uniprot_nodes = uniprot_adapter.get_nodes()
+# get_nodes() is a generator; materialize it so it can be consumed by both
+# write_nodes() and export_data_to_csv() without being exhausted on first use.
+uniprot_nodes = list(uniprot_adapter.get_nodes())
 uniprot_edges = uniprot_adapter.get_edges()
 
 

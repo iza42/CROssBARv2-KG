@@ -576,7 +576,9 @@ class Uniprot:
         Tell if UniProt protein node is a L, R or nothing.
         """
 
-        uniprot_id = uniprot_id[8:]
+        # strip the CURIE prefix by splitting on ":" instead of assuming a
+        # fixed-length "uniprot:" prefix (8 chars), which breaks if it changes.
+        uniprot_id = uniprot_id.split(":")[-1]
 
         if uniprot_id in self.ligands:
             return "ligand"
@@ -607,8 +609,10 @@ class Uniprot:
             f"{[type.name for type in self.node_types]}."
         )
         
+        seen_organisms = set()
+
         for protein_id, all_props in self._reformat_and_filter_proteins():
-            
+
             if UniprotNodeType.PROTEIN in self.node_types:
                 protein_props = self._get_protein_properties(all_props, protein_id.split(":")[1])
 
@@ -634,7 +638,8 @@ class Uniprot:
 
                 organism_id, organism_props = self._get_organism(all_props)
 
-                if organism_id:
+                if organism_id and organism_id not in seen_organisms:
+                    seen_organisms.add(organism_id)
                     yield (
                         organism_id,
                         organism_label,
@@ -737,9 +742,9 @@ class Uniprot:
                         )
                     )
 
-        if edge_list:
-
-            return edge_list
+        # always return a list (empty if no edges) so the Generator-typed
+        # signature never yields None to downstream `for`/`write_edges`.
+        return edge_list
 
     def _reformat_and_filter_proteins(self):
         """
@@ -760,6 +765,10 @@ class Uniprot:
         Get gene node representation from UniProt data per protein. Since one
         protein can have multiple genes, return a list of tuples.
         """
+
+        # work on a copy so popping the id field below does not mutate the
+        # caller's dict (get_nodes reuses all_props for organism extraction)
+        all_props = dict(all_props)
 
         # if genes and database(GeneID) fields exist, define gene_properties
         if not (
@@ -828,6 +837,10 @@ class Uniprot:
 
     @validate_call
     def _get_organism(self, all_props: dict):
+
+        # work on a copy so popping the organism id below does not mutate the
+        # caller's dict
+        all_props = dict(all_props)
 
         organism_props = {}
 
@@ -1060,19 +1073,6 @@ class Uniprot:
         return enst_list, ensg_ids
 
     @lru_cache
-    def _normalise_curie_cached(
-        self, prefix: str, identifier: str, sep: str = ":"
-    ) -> Optional[str]:
-        """
-        Wrapper to call and cache `normalize_curie()` from Bioregistry.
-        """
-
-        if not self.normalise_curies:
-            return identifier
-
-        return normalize_curie(f"{prefix}{sep}{identifier}", sep=sep)
-
-    @lru_cache
     @validate_call
     def add_prefix_to_id(
         self, prefix: str = None, identifier: str = None, sep: str = ":"
@@ -1104,8 +1104,11 @@ class Uniprot:
     ):
 
         # ensure computation of ENSGs
+        # guard against node_fields=None (default): the None -> all-fields fallback
+        # happens below, so checking membership here must not run on None.
         if (
-            UniprotNodeField.ENSEMBL_GENE_IDS in node_fields
+            node_fields
+            and UniprotNodeField.ENSEMBL_GENE_IDS in node_fields
             and UniprotNodeField.ENSEMBL_TRANSCRIPT_IDS not in node_fields
         ):
             node_fields.append(UniprotNodeField.ENSEMBL_TRANSCRIPT_IDS)
