@@ -5,7 +5,7 @@ from pypath.inputs import collectri, dorothea, trrust, uniprot
 import pypath.utils.mapping as mapping
 
 from contextlib import ExitStack
-from typing import Union, Literal
+from typing import Union
 from enum import Enum, EnumMeta, IntEnum
 from biocypher._logger import logger
 from pydantic import BaseModel, DirectoryPath, validate_call
@@ -14,7 +14,6 @@ import os
 
 from bioregistry import normalize_curie
 from tqdm import tqdm
-from time import time
 
 import pandas as pd
 import numpy as np
@@ -225,27 +224,20 @@ class TFGene:
         self.trrust_gene_symbol_to_entrez_id = {}
 
         if 9606 in self.organism:
-            try:
-                if hasattr(trrust, "scrape_human"):
-                    self.trrust_gene_symbol_to_entrez_id |= {
-                        entry["gene_symbol"]: entry["entrez_id"]
-                        for entry in trrust.scrape_human()
-                    }
-            except Exception as e:
-                logger.warning(f"TRRUST human gene symbol mapping skipped: {e}")
+            self.trrust_gene_symbol_to_entrez_id |= {
+                entry["gene_symbol"]: entry["entrez_id"]
+                for entry in trrust.scrape_human()
+            }
+
 
             self.trrust_interactions.extend(trrust.trrust_human())
 
         if 10090 in self.organism:
-            try:
-                if hasattr(trrust, "scrape_mouse"):
-                    self.trrust_gene_symbol_to_entrez_id |= {
-                        entry["gene_symbol"]: entry["entrez_id"]
-                        for entry in trrust.scrape_mouse()
-                    }
-            except Exception as e:
-                logger.warning(f"TRRUST mouse gene symbol mapping skipped: {e}")
-
+            if hasattr(trrust, "scrape_mouse"):
+                self.trrust_gene_symbol_to_entrez_id |= {
+                    entry["gene_symbol"]: entry["entrez_id"]
+                    for entry in trrust.scrape_mouse()
+                }
             self.trrust_interactions.extend(trrust.trrust_mouse())
 
         t1 = time.time()
