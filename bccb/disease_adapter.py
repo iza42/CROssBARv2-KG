@@ -556,51 +556,57 @@ class Disease:
             )
 
     def download_disgenet_data(self) -> None:
-        if not hasattr(self, "disgenet_id_mappings_dict"):
+        if not hasattr(self, "disgenet_api"):
+            self.disgenet_api = disgenet.DisgenetApi()
+
+        if not hasattr(self, "disgenet_disease_ids") or not hasattr(
+            self, "disgenet_id_mappings_dict"
+        ):
             self.prepare_disgenet_id_mappings()
 
-        if not hasattr(self, "uniprot_to_entrez"):
-            uniprot_to_entrez = uniprot.uniprot_data(
-                "xref_geneid", "9606", True
-            )
-            self.uniprot_to_entrez = {
-                k: v.strip(";").split(";")[0]
-                for k, v in uniprot_to_entrez.items()
-            }
+        # DisGeNET query functions expect vocabulary-prefixed disease ids
+        # (e.g. "UMLS_C0006142"); disgenet_disease_ids holds bare CUIs.
+        disease_ids_prefixed = [
+            f"UMLS_{disease_id}" for disease_id in self.disgenet_disease_ids
+        ]
+        batch_size = 10
 
-        self.gene_symbol_to_uniprot = {}
-        for k, v in uniprot.uniprot_data("gene_names", "9606", True).items():
-            for symbol in v.split(" "):
-                self.gene_symbol_to_uniprot[symbol] = k
+        # the query functions below return only the payload and discard the
+        # paging metadata, so a full page is the only available signal that
+        # more results are waiting; the API serves 100 records per page
+        page_size = 100
 
         if DiseaseEdgeType.DISEASE_TO_DISEASE in self.edge_types:
             t0 = time()
 
-            if not hasattr(self, "disgenet_api"):
-                self.disgenet_api = disgenet.DisgenetApi()
-
-            if not hasattr(self, "disgenet_disease_ids"):
-                self.disgenet_disease_ids = (
-                    disgenet.disease_id_mappings().keys()
-                )
-
-            if not hasattr(self, "disgenet_id_mappings_dict"):
-                self.prepare_disgenet_id_mappings()
-
             self.disgenet_dda_gene = []
             self.disgenet_dda_variant = []
-            for disease_id in tqdm(self.disgenet_disease_ids):
-                try:
-                    self.disgenet_dda_gene.extend(
-                        self.disgenet_api.get_ddas_that_share_genes(disease_id)
+
+            for i in tqdm(range(0, len(disease_ids_prefixed), batch_size)):
+                batch = disease_ids_prefixed[i : i + batch_size]
+                page_number = 0
+
+                while True:
+                    dda_result = self.disgenet_api.get_dda(
+                        disease_1=batch, page_number=page_number
                     )
-                    self.disgenet_dda_variant.extend(
-                        self.disgenet_api.get_ddas_that_share_variants(
-                            disease_id
-                        )
-                    )
-                except TypeError:
-                    logger.debug(f"{disease_id} not available")
+
+                    if not dda_result:
+                        if page_number == 0:
+                            logger.debug(
+                                f"DDA batch starting at {batch[0]} not available"
+                            )
+                        break
+
+                    # get_dda() returns both jaccard_genes and jaccard_variants
+                    # from one call now; both lists reference the same records.
+                    self.disgenet_dda_gene.extend(dda_result)
+                    self.disgenet_dda_variant.extend(dda_result)
+
+                    if len(dda_result) < page_size:
+                        break
+
+                    page_number += 1
 
             t1 = time()
             logger.info(
@@ -610,19 +616,8 @@ class Disease:
         if DiseaseEdgeType.GENE_TO_DISEASE in self.edge_types:
             t0 = time()
 
-            if not hasattr(self, "disgenet_api"):
-                self.disgenet_api = disgenet.DisgenetApi()
-
-            if not hasattr(self, "disgenet_disease_ids") or not hasattr(
-                self, "disgenet_id_mappings_dict"
-            ):
-                self.disgenet_disease_ids = (
-                    disgenet.disease_id_mappings().keys()
-                )
-
-            if not hasattr(self, "disgenet_id_mappings_dict"):
-                self.prepare_disgenet_id_mappings()
-
+            # only the variant-disease step below needs these mappings, so
+            # they are built here rather than for every edge type
             if not hasattr(self, "uniprot_to_entrez"):
                 uniprot_to_entrez = uniprot.uniprot_data(
                     "xref_geneid", "9606", True
@@ -632,26 +627,59 @@ class Disease:
                     for k, v in uniprot_to_entrez.items()
                 }
 
-            self.gene_symbol_to_uniprot = {}
-            for k, v in uniprot.uniprot_data(
-                "gene_names", "9606", True
-            ).items():
-                for symbol in v.split(" "):
-                    self.gene_symbol_to_uniprot[symbol] = k
+            if not hasattr(self, "gene_symbol_to_uniprot"):
+                self.gene_symbol_to_uniprot = {}
+                for k, v in uniprot.uniprot_data(
+                    "gene_names", "9606", True
+                ).items():
+                    for symbol in v.split(" "):
+                        self.gene_symbol_to_uniprot[symbol] = k
 
             self.disgenet_gda = []
             self.disgenet_vda = []
-            for disease_id in tqdm(self.disgenet_disease_ids):
-                try:
-                    self.disgenet_gda.extend(
-                        self.disgenet_api.get_gdas_by_diseases(disease_id)
-                    )
-                    self.disgenet_vda.extend(
-                        self.disgenet_api.get_vdas_by_diseases(disease_id)
+
+            for i in tqdm(range(0, len(disease_ids_prefixed), batch_size)):
+                batch = disease_ids_prefixed[i : i + batch_size]
+
+                page_number = 0
+                while True:
+                    gda_result = self.disgenet_api.get_gda_summary(
+                        disease=batch, page_number=page_number
                     )
 
-                except (TypeError, ValueError) as e:
-                    logger.debug(f"{disease_id} not available")
+                    if not gda_result:
+                        if page_number == 0:
+                            logger.debug(
+                                f"GDA batch starting at {batch[0]} not available"
+                            )
+                        break
+
+                    self.disgenet_gda.extend(gda_result)
+
+                    if len(gda_result) < page_size:
+                        break
+
+                    page_number += 1
+
+                page_number = 0
+                while True:
+                    vda_result = self.disgenet_api.get_vda_summary(
+                        disease=batch, page_number=page_number
+                    )
+
+                    if not vda_result:
+                        if page_number == 0:
+                            logger.debug(
+                                f"VDA batch starting at {batch[0]} not available"
+                            )
+                        break
+
+                    self.disgenet_vda.extend(vda_result)
+
+                    if len(vda_result) < page_size:
+                        break
+
+                    page_number += 1
 
             t1 = time()
             logger.info(
@@ -744,18 +772,35 @@ class Disease:
         """
         Prepare disgenet id mappings
         """
+        if not hasattr(self, "mondo"):
+            self.download_mondo_data()
 
-        disgenet_id_mappings = disgenet.disease_id_mappings()
+        if not hasattr(self, "disgenet_api"):
+            self.disgenet_api = disgenet.DisgenetApi()
 
+        mondo_ids = [
+            term.obo_id.replace(":", "_")
+            for term in self.mondo
+            if not term.is_obsolete and term.obo_id and "MONDO" in term.obo_id
+        ]
+
+        disgenet_id_mappings = disgenet.disease_id_mappings(
+            self.disgenet_api, mondo_ids, batch_size=10
+        )
+
+        # vocabulary prefixes as sent by the API in diseaseVocabularies;
+        # every entry except MONDO needs a counterpart in
+        # `disgenet_dbs_to_mondo_dbs` in map_disgenet_disease_id_to_mondo_id
         selected_dbs = [
             "DO",
             "EFO",
             "HPO",
             "MONDO",
-            "MSH",
+            "MESH",
             "NCI",
-            "ICD10CM",
+            "ICD10",
             "OMIM",
+            "ORDO",
         ]
         self.disgenet_id_mappings_dict = collections.defaultdict(dict)
 
@@ -771,6 +816,8 @@ class Disease:
                     )
 
             self.disgenet_id_mappings_dict[disg_id] = map_dict
+
+        self.disgenet_disease_ids = list(disgenet_id_mappings.keys())
 
     def prepare_malacards_mondo_mappings(self, malacards_external_ids):
 
@@ -1404,20 +1451,19 @@ class Disease:
 
         df_list = []
         for vda in self.disgenet_vda:
-            if vda.gene_symbol and self.uniprot_to_entrez.get(
-                self.gene_symbol_to_uniprot.get(vda.gene_symbol)
-            ):
+            gene_id = (
+                self._resolve_gene_symbol_to_entrez(vda.gene_symbol)
+                if vda.gene_symbol
+                else None
+            )
+
+            if gene_id:
                 diseaseid = self.map_disgenet_disease_id_to_mondo_id(
                     vda.diseaseid, return_pandas_none=False
                 )
-                gene_id = str(
-                    self.uniprot_to_entrez.get(
-                        self.gene_symbol_to_uniprot.get(vda.gene_symbol)
-                    )
-                )
-                if diseaseid and gene_id:
+                if diseaseid:
                     df_list.append(
-                        (gene_id, diseaseid, vda.score, vda.variantid)
+                        (str(gene_id), diseaseid, vda.score, vda.variantid)
                     )
 
         disgenet_vda_df = pd.DataFrame(
@@ -1466,7 +1512,7 @@ class Disease:
         df_list = []
         # DISEASE-DISEASE BY GENE
         for dda in self.disgenet_dda_gene:
-            if round(dda.jaccard_genes, 3) != 0.0:
+            if dda.jaccard_genes is not None and round(dda.jaccard_genes, 3) != 0.0:
                 diseaseid1 = self.map_disgenet_disease_id_to_mondo_id(
                     dda.diseaseid1, return_pandas_none=False
                 )
@@ -1508,7 +1554,7 @@ class Disease:
         df_list = []
         # DISEASE-DISEASE BY VARIANT
         for dda in self.disgenet_dda_variant:
-            if round(dda.jaccard_variants, 3) != 0.0:
+            if dda.jaccard_variants is not None and round(dda.jaccard_variants, 3) != 0.0:
                 diseaseid1 = self.map_disgenet_disease_id_to_mondo_id(
                     dda.diseaseid1, return_pandas_none=False
                 )
@@ -2287,6 +2333,21 @@ class Disease:
     def ensure_iterable(self, element):
         return element if isinstance(element, (list, tuple, set)) else [element]
 
+    def _resolve_gene_symbol_to_entrez(self, gene_symbols):
+        """
+        vda.gene_symbol is a tuple that may contain more than one symbol
+        (e.g. an overlapping gene pair like ('NBR2', 'BRCA1')). Tries each
+        symbol in order and returns the Entrez gene id for the first one
+        that resolves through gene_symbol_to_uniprot -> uniprot_to_entrez.
+        Returns None if none of the symbols resolve.
+        """
+        for symbol in gene_symbols:
+            uniprot_id = self.gene_symbol_to_uniprot.get(symbol)
+            if uniprot_id and self.uniprot_to_entrez.get(uniprot_id):
+                return self.uniprot_to_entrez.get(uniprot_id)
+
+        return None
+
     def map_disgenet_disease_id_to_mondo_id(
         self, disgenet_id, return_pandas_none=True
     ):
@@ -2295,10 +2356,11 @@ class Disease:
             "DO": "DOID",
             "EFO": "EFO",
             "HPO": "HP",
-            "MSH": "MESH",
+            "MESH": "MESH",
             "NCI": "NCIT",
-            "ICD10CM": "ICD10CM",
+            "ICD10": "ICD10CM",
             "OMIM": "OMIM",
+            "ORDO": "Orphanet",
         }
 
         diseaseid = self.mondo_mappings["UMLS"].get(disgenet_id)
