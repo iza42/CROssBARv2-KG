@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-import collections
-import csv
-import re
 import asyncio
+import collections
+import re
 import warnings
-
-from concurrent.futures.thread import ThreadPoolExecutor
-
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
+from concurrent.futures.thread import ThreadPoolExecutor
 
 import pypath.resources.urls as urls
 from pypath.share import curl
