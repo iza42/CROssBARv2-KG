@@ -76,6 +76,10 @@ class DisgenetApi:
         Simple wrapper to get rid of the burden of
         checking authentication status and authenticating
         if already haven't.
+
+        Wraps _retrieve_data, whose callers unpack a (payload, paging)
+        tuple, so a failed authentication has to return that shape too
+        rather than a bare None.
         """
 
         def wrapper(self, *args, **kwargs):
@@ -84,6 +88,7 @@ class DisgenetApi:
 
             else:
                 _log("DisGeNET failure in authorization, check your credentials.")
+                return None, None
 
         return wrapper
 
@@ -145,9 +150,9 @@ class DisgenetApi:
         @diseaseClasses_HPO: Usually None; kept to avoid dropping this
         classification when it is populated for a given variant/gene.
 
-        @source (returned field): Curated source names derived from
-        scoreBreakdown.components.curated.sources; may contain multiple
-        values.
+        @source (returned field): Source names derived from
+        scoreBreakdown, collected across all of its components and
+        deduplicated; may contain multiple values.
         
 
         @variant: Union[str, List[str]]
@@ -160,9 +165,8 @@ class DisgenetApi:
             Source of the VDA.
         @min_score/@max_score, @min_ei/@max_ei, @min_dsi/@max_dsi,
         @min_dpi/@max_dpi: float
-            Filters on the API's raw score field, which is not bounded to
-            [0,1] (unlike normalized_score, which has no separate filter
-            param). ei/dsi/dpi ranges are in [0,1].
+            Score ranges, in [0,1]. min_score/max_score filter on
+            normalized_score, matching the returned score field.
         @dis_class_list: Union[str, List[str]]
             MeSH Disease Classes.
         @page_number: int
@@ -264,7 +268,7 @@ class DisgenetApi:
                 self._get_float(entry.get("ei")),
                 self._get_int(entry.get("yearInitial")),
                 self._get_int(entry.get("yearFinal")),
-                self._get_curated_sources(entry),
+                self._get_sources(entry),
             )
 
         return result
@@ -323,9 +327,9 @@ class DisgenetApi:
         """
         Returns Gene-Disease Associations.
 
-        @source (returned field): Curated source names derived from
-        scoreBreakdown.components.curated.sources; may contain multiple
-        values.
+        @source (returned field): Source names derived from
+        scoreBreakdown, collected across all of its components and
+        deduplicated; may contain multiple values.
 
         @gene_ncbi_id / @gene_ensembl_id / @gene_symbol: Union[str, List[str]]
             Gene identifier(s) in the respective vocabulary, up to 100.
@@ -337,9 +341,8 @@ class DisgenetApi:
             Source of the GDA.
         @min_score/@max_score, @min_ei/@max_ei, @min_dsi/@max_dsi,
         @min_dpi/@max_dpi, @min_pli/@max_pli: float
-            Filters on the API's raw score field, which is not bounded to
-            [0,1] (unlike normalized_score, which has no separate filter
-            param). ei/dsi/dpi ranges are in [0,1].
+            Score ranges, in [0,1]. min_score/max_score filter on
+            normalized_score, matching the returned score field.
         @type: str
             DisGeNET Disease Type ("disease", "phenotype", "group").
         @dis_class_list: Union[str, List[str]]
@@ -463,7 +466,7 @@ class DisgenetApi:
                 self._get_string(entry.get("el")),
                 self._get_int(entry.get("yearInitial")),
                 self._get_int(entry.get("yearFinal")),
-                self._get_curated_sources(entry),
+                self._get_sources(entry),
             )
 
         return result
@@ -652,7 +655,8 @@ class DisgenetApi:
         ],
     ):
         """
-        Returns Disease-Disease Associations between disease_1 and disease_2.
+        Returns Disease-Disease Associations for disease_1, optionally
+        restricted to the diseases given in disease_2.
         The API returns gene-sharing and variant-sharing metrics together
         in a single query, but a given pair only carries the metrics it
         actually has: a pair that shares genes but no variants comes back
@@ -662,7 +666,7 @@ class DisgenetApi:
         against None before doing arithmetic on either jaccard field.
 
         @disease_1: Union[str, List[str]]
-        Disease id(s) with vocabulary prefix, e.g. "UMLS_C0005745".
+            Disease id(s) with vocabulary prefix, e.g. "UMLS_C0005745".
         @disease_2: Union[str, List[str]], optional
             Disease id(s) with vocabulary prefix. If omitted, returns all
             diseases sharing genes/variants with disease_1.
@@ -884,18 +888,39 @@ class DisgenetApi:
 
         return str_obj
 
-    def _get_curated_sources(self, entry) -> Optional[Tuple[str]]:
+    def _get_sources(self, entry) -> Optional[Tuple[str]]:
         """
-    Returns curated source names derived from scoreBreakdown, if present.
+        Returns source names derived from scoreBreakdown, if present.
 
-    @entry : dict
-        A single record from a /summary or /entity response.
-    """
+        Collects every component (curated, clinical, inferred, models,
+        literature, biobank) rather than the curated ones alone, which
+        stays closer to the old API's `source` field; callers wanting a
+        single component can filter downstream.
+
+        A component may be present but null (biobank commonly is), and
+        the same source can appear under more than one component
+        (TEXTMINING_MODELS shows up under both models and literature), so
+        the union is deduplicated. It is also sorted to keep the value
+        stable across runs, since these tuples end up in namedtuples that
+        disgenet_annotations() collects into a set.
+
+        @entry : dict
+            A single record from a /summary response.
+        """
         breakdown = entry.get("scoreBreakdown")
         if not breakdown:
             return None
-        sources = breakdown[0].get("components", {}).get("curated", {}).get("sources")
-        return tuple(sources) if sources else None
+
+        components = breakdown[0].get("components") or {}
+        sources = set()
+
+        for component in components.values():
+            if not component:
+                continue
+
+            sources.update(component.get("sources") or ())
+
+        return tuple(sorted(sources)) if sources else None
 
 
 @DisgenetApi._delete_cache
@@ -903,10 +928,16 @@ def variant_gene_mappings(
     api: "DisgenetApi",
     gene_ncbi_ids: List[str],
     batch_size: int = 10,
-) -> Dict[str, "VariantGeneMapping"]:
+) -> Tuple[Dict[str, "VariantGeneMapping"], List[List[str]]]:
     """
     Builds a {snpId: [VariantGeneMapping(geneId, geneSymbol, sourceIds),
     ...]} mapping by querying the DisGeNET API.
+
+    Returns a (mapping, failed_batches) tuple. A batch whose pagination
+    is cut short by a retrieval error - an expired quota mid-run being
+    the common case - is appended to failed_batches, so a caller can
+    tell a partial result from a complete one instead of silently
+    building on truncated input.
 
     Requires a list of known NCBI Gene IDs to query against - e.g. from
     uniprot_adapter.py's xref_geneid field (same source used for
@@ -935,6 +966,7 @@ def variant_gene_mappings(
     )
 
     mapping = dict()
+    failed_batches = []
 
     for i in range(0, len(gene_ncbi_ids), batch_size):
         batch = gene_ncbi_ids[i : i + batch_size]
@@ -953,7 +985,12 @@ def variant_gene_mappings(
                 # A real error occurred (auth failure, bad response, etc.),
                 # not just an empty final page — stop this batch rather than
                 # silently treating a failure as "pagination complete".
-                _log("DisGeNET: stopping pagination for this batch due to a retrieval error.")
+                _log(
+                    f"DisGeNET: stopping pagination for batch {batch} "
+                    f"at page {page_number} due to a retrieval error; "
+                    f"results for these ids are incomplete."
+                )
+                failed_batches.append(batch)
                 break
 
             if not result:
@@ -980,6 +1017,11 @@ def variant_gene_mappings(
                     pair = (gene_id_str, gene_symbol)
 
                     if pair in existing_pairs:
+                        # variantToGenes is variant-level data: the same
+                        # variant reached through a different gene query
+                        # comes back with an identical list, sources
+                        # included, so the skipped record has nothing to
+                        # merge in - verified against the API.
                         continue
 
                     mapping[snp_id].append(
@@ -998,7 +1040,7 @@ def variant_gene_mappings(
 
             page_number += 1
 
-    return mapping
+    return mapping, failed_batches
 
 
 @DisgenetApi._delete_cache
@@ -1006,10 +1048,16 @@ def disease_id_mappings(
     api: "DisgenetApi",
     mondo_ids: List[str],
     batch_size: int = 10,
-) -> Dict[str, "DiseaseIdMapping"]:
+) -> Tuple[Dict[str, "DiseaseIdMapping"], List[List[str]]]:
     """
     Builds a {diseaseId: DiseaseIdMapping(name, vocabularies)} mapping by
     querying the DisGeNET API.
+
+    Returns a (mapping, failed_batches) tuple. A batch whose pagination
+    is cut short by a retrieval error - an expired quota mid-run being
+    the common case - is appended to failed_batches, so a caller can
+    tell a partial result from a complete one instead of silently
+    building on truncated input.
 
     Requires a list of known MONDO disease IDs to query against - e.g.
     from disease_adapter.py's MONDO ontology download. Each ID must be in
@@ -1056,6 +1104,7 @@ def disease_id_mappings(
     )
 
     mapping = dict()
+    failed_batches = []
 
     for i in range(0, len(mondo_ids), batch_size):
         batch = mondo_ids[i : i + batch_size]
@@ -1074,7 +1123,12 @@ def disease_id_mappings(
                 # A real error occurred (auth failure, bad response, etc.),
                 # not just an empty final page — stop this batch rather than
                 # silently treating a failure as "pagination complete".
-                _log("DisGeNET: stopping pagination for this batch due to a retrieval error.")
+                _log(
+                    f"DisGeNET: stopping pagination for batch {batch} "
+                    f"at page {page_number} due to a retrieval error; "
+                    f"results for these ids are incomplete."
+                )
+                failed_batches.append(batch)
                 break
 
             if not result:
@@ -1123,7 +1177,7 @@ def disease_id_mappings(
 
             page_number += 1
 
-    return mapping
+    return mapping, failed_batches
 
 
 @DisgenetApi._delete_cache
@@ -1132,10 +1186,16 @@ def disgenet_annotations(
     gene_ncbi_ids: List[str],
     dataset: str = "curated",
     batch_size: int = 10,
-) -> Dict[str, set]:
+) -> Tuple[Dict[str, set], List[List[str]]]:
     """
     Builds a {uniprot_id: {DisGeNetAnnotation(...), ...}} mapping by
     querying the DisGeNET API.
+
+    Returns a (mapping, failed_batches) tuple. A batch whose pagination
+    is cut short by a retrieval error - an expired quota mid-run being
+    the common case - is appended to failed_batches, so a caller can
+    tell a partial result from a complete one instead of silently
+    building on truncated input.
 
     Requires a list of known NCBI Gene IDs to query against - e.g. from
     uniprot_adapter.py's xref_geneid field. No gene-symbol-to-UniProt
@@ -1171,7 +1231,7 @@ def disgenet_annotations(
             "'all' are mapped to the API's source filter; 'literature' "
             "and 'befree' have no clear equivalent in the source list."
         )
-        return {}
+        return {}, []
 
     source = dataset_source_map[dataset]
 
@@ -1190,6 +1250,7 @@ def disgenet_annotations(
     )
 
     data = collections.defaultdict(set)
+    failed_batches = []
 
     for i in range(0, len(gene_ncbi_ids), batch_size):
         batch = gene_ncbi_ids[i : i + batch_size]
@@ -1211,7 +1272,12 @@ def disgenet_annotations(
                 # A real error occurred (auth failure, bad response, etc.),
                 # not just an empty final page — stop this batch rather than
                 # silently treating a failure as "pagination complete".
-                _log("DisGeNET: stopping pagination for this batch due to a retrieval error.")
+                _log(
+                    f"DisGeNET: stopping pagination for batch {batch} "
+                    f"at page {page_number} due to a retrieval error; "
+                    f"results for these ids are incomplete."
+                )
+                failed_batches.append(batch)
                 break
 
             if not result:
@@ -1233,7 +1299,7 @@ def disgenet_annotations(
                 nof_snps = entry.get("numDBSNPsupportingAssociation")
 
                 
-                record_source = api._get_curated_sources(entry)
+                record_source = api._get_sources(entry)
 
                 annotation = DisGeNetAnnotation(
                     disease,
@@ -1256,4 +1322,4 @@ def disgenet_annotations(
 
             page_number += 1
 
-    return dict(data)
+    return dict(data), failed_batches

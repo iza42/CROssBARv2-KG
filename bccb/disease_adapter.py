@@ -571,10 +571,10 @@ class Disease:
         ]
         batch_size = 10
 
-        # the query functions below return only the payload and discard the
-        # paging metadata, so a full page is the only available signal that
-        # more results are waiting; the API serves 100 records per page
-        page_size = 100
+        # a page past the end comes back as an empty list, so a None means
+        # the request itself failed - the two must not be conflated, or a
+        # batch truncated mid-pagination looks like a completed one
+        self.disgenet_failed_batches = []
 
         if DiseaseEdgeType.DISEASE_TO_DISEASE in self.edge_types:
             t0 = time()
@@ -585,11 +585,24 @@ class Disease:
             for i in tqdm(range(0, len(disease_ids_prefixed), batch_size)):
                 batch = disease_ids_prefixed[i : i + batch_size]
                 page_number = 0
+                # the query functions discard the paging metadata, so the
+                # page size is taken from the first full page rather than
+                # assumed - it is not the same on every account tier
+                page_size = None
 
                 while True:
                     dda_result = self.disgenet_api.get_dda(
                         disease_1=batch, page_number=page_number
                     )
+
+                    if dda_result is None:
+                        self.disgenet_failed_batches.append(("dda", batch))
+                        logger.warning(
+                            f"DDA batch starting at {batch[0]} was cut short "
+                            f"at page {page_number} by a retrieval error; "
+                            f"results for these ids are incomplete."
+                        )
+                        break
 
                     if not dda_result:
                         if page_number == 0:
@@ -602,6 +615,9 @@ class Disease:
                     # from one call now; both lists reference the same records.
                     self.disgenet_dda_gene.extend(dda_result)
                     self.disgenet_dda_variant.extend(dda_result)
+
+                    if page_size is None:
+                        page_size = len(dda_result)
 
                     if len(dda_result) < page_size:
                         break
@@ -642,10 +658,20 @@ class Disease:
                 batch = disease_ids_prefixed[i : i + batch_size]
 
                 page_number = 0
+                page_size = None
                 while True:
                     gda_result = self.disgenet_api.get_gda_summary(
                         disease=batch, page_number=page_number
                     )
+
+                    if gda_result is None:
+                        self.disgenet_failed_batches.append(("gda", batch))
+                        logger.warning(
+                            f"GDA batch starting at {batch[0]} was cut short "
+                            f"at page {page_number} by a retrieval error; "
+                            f"results for these ids are incomplete."
+                        )
+                        break
 
                     if not gda_result:
                         if page_number == 0:
@@ -656,16 +682,29 @@ class Disease:
 
                     self.disgenet_gda.extend(gda_result)
 
+                    if page_size is None:
+                        page_size = len(gda_result)
+
                     if len(gda_result) < page_size:
                         break
 
                     page_number += 1
 
                 page_number = 0
+                page_size = None
                 while True:
                     vda_result = self.disgenet_api.get_vda_summary(
                         disease=batch, page_number=page_number
                     )
+
+                    if vda_result is None:
+                        self.disgenet_failed_batches.append(("vda", batch))
+                        logger.warning(
+                            f"VDA batch starting at {batch[0]} was cut short "
+                            f"at page {page_number} by a retrieval error; "
+                            f"results for these ids are incomplete."
+                        )
+                        break
 
                     if not vda_result:
                         if page_number == 0:
@@ -675,6 +714,9 @@ class Disease:
                         break
 
                     self.disgenet_vda.extend(vda_result)
+
+                    if page_size is None:
+                        page_size = len(vda_result)
 
                     if len(vda_result) < page_size:
                         break
@@ -686,7 +728,15 @@ class Disease:
                 f"Disgenet gene-disease interaction data is downloaded in {round((t1-t0) / 60, 2)} mins"
             )
 
-    def download_malacards_data(self, 
+        if self.disgenet_failed_batches:
+            logger.warning(
+                f"{len(self.disgenet_failed_batches)} Disgenet batches were "
+                f"cut short by a retrieval error, so the downloaded data is "
+                f"incomplete. The affected query types and ids are in "
+                f"self.disgenet_failed_batches."
+            )
+
+    def download_malacards_data(self,
                                 malacards_json_path: FilePath | None = None, 
                                 malacards_related_diseases_json_path: FilePath | None = None) -> None:
 
@@ -784,9 +834,20 @@ class Disease:
             if not term.is_obsolete and term.obo_id and "MONDO" in term.obo_id
         ]
 
-        disgenet_id_mappings = disgenet.disease_id_mappings(
+        disgenet_id_mappings, failed_batches = disgenet.disease_id_mappings(
             self.disgenet_api, mondo_ids, batch_size=10
         )
+
+        self.disgenet_failed_id_mapping_batches = failed_batches
+
+        if failed_batches:
+            logger.warning(
+                f"{len(failed_batches)} of "
+                f"{-(-len(mondo_ids) // 10)} Disgenet id mapping batches "
+                f"were cut short by a retrieval error; the mappings below "
+                f"are incomplete. Affected ids are in "
+                f"self.disgenet_failed_id_mapping_batches."
+            )
 
         # vocabulary prefixes as sent by the API in diseaseVocabularies;
         # every entry except MONDO needs a counterpart in
