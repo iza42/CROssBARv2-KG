@@ -130,19 +130,16 @@ uniprot_adapter = Uniprot(
 
 uniprot_adapter.download_uniprot_data(cache=CACHE, retries=6)
 
-# get_nodes() is a generator; materialize it so it can be consumed by both
-# write_nodes() and export_data_to_csv() without being exhausted on first use.
-uniprot_nodes = list(uniprot_adapter.get_nodes())
 uniprot_edges = uniprot_adapter.get_edges()
 
 
-bc.write_nodes(uniprot_nodes)
+bc.write_nodes(uniprot_adapter.get_nodes())
 bc.write_edges(uniprot_edges)
 
 
 if export_as_csv:
     uniprot_adapter.export_data_to_csv(path=output_dir_path,
-                                    node_data=uniprot_nodes,
+                                    node_data=uniprot_adapter.get_nodes(),
                                     edge_data=uniprot_edges)
 
 # PPI

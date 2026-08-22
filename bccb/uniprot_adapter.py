@@ -576,8 +576,6 @@ class Uniprot:
         Tell if UniProt protein node is a L, R or nothing.
         """
 
-        # strip the CURIE prefix by splitting on ":" instead of assuming a
-        # fixed-length "uniprot:" prefix (8 chars), which breaks if it changes.
         uniprot_id = uniprot_id.split(":")[-1]
 
         if uniprot_id in self.ligands:
@@ -742,8 +740,6 @@ class Uniprot:
                         )
                     )
 
-        # always return a list (empty if no edges) so the Generator-typed
-        # signature never yields None to downstream `for`/`write_edges`.
         return edge_list
 
     def _reformat_and_filter_proteins(self):
@@ -766,8 +762,6 @@ class Uniprot:
         protein can have multiple genes, return a list of tuples.
         """
 
-        # work on a copy so popping the id field below does not mutate the
-        # caller's dict (get_nodes reuses all_props for organism extraction)
         all_props = dict(all_props)
 
         # if genes and database(GeneID) fields exist, define gene_properties
@@ -838,8 +832,6 @@ class Uniprot:
     @validate_call
     def _get_organism(self, all_props: dict):
 
-        # work on a copy so popping the organism id below does not mutate the
-        # caller's dict
         all_props = dict(all_props)
 
         organism_props = {}
@@ -1104,8 +1096,6 @@ class Uniprot:
     ):
 
         # ensure computation of ENSGs
-        # guard against node_fields=None (default): the None -> all-fields fallback
-        # happens below, so checking membership here must not run on None.
         if (
             node_fields
             and UniprotNodeField.ENSEMBL_GENE_IDS in node_fields
