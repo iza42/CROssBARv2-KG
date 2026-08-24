@@ -577,7 +577,8 @@ def _kegg_ddi(drugIds, join=True, asynchronous=False):
         drugIds = ['+'.join(drugIds)]
 
     if asynchronous:
-        return asyncio.run(_kegg_ddi_async(drugIds))
+        pool = ThreadPoolExecutor()
+        return pool.submit(asyncio.run, _kegg_ddi_async(drugIds)).result()
 
     return _kegg_ddi_sync(drugIds)
 
