@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-import asyncio
 import collections
+import csv
 import re
+import asyncio
 import warnings
+
+from concurrent.futures.thread import ThreadPoolExecutor
+
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
-from concurrent.futures.thread import ThreadPoolExecutor
 
 import pypath.resources.urls as urls
 from pypath.share import curl
@@ -683,22 +686,12 @@ class _KeggDatabase(ABC):
 class _Organism(_KeggDatabase):
 
     def __init__(self):
-        self.pattern = re.compile(
-            r"^(?P<org>[^;]+);\s+(?P<org_name>.+?)(?:\s+\((?P<common>[^)]+)\))?$"
-        )
-
         self.download_data()
 
 
     def download_data(self):
-        entries = _kegg_list("genome")
-
-        self._data = {}
-
-        for org_id, rest in entries:
-            if m := self.pattern.match(rest):
-                org_name = m.group("org_name").strip()
-                self._data[self.handle(m.group("org"))] = [org_id, org_name]
+        entries = _kegg_list('organism')
+        self._data = {self.handle(org) : [org_id, org_name] for (org_id, org, org_name, _) in entries}
 
 
     def handle(self, org):
