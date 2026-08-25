@@ -78,8 +78,7 @@ class DisgenetApi:
         if already haven't.
 
         Wraps _retrieve_data, whose callers unpack a (payload, paging)
-        tuple, so a failed authentication has to return that shape too
-        rather than a bare None.
+        tuple, so a failed authentication has to return that shape too.
         """
 
         def wrapper(self, *args, **kwargs):
@@ -147,8 +146,8 @@ class DisgenetApi:
         """
         Returns Variant-Disease Associations.
 
-        @diseaseClasses_HPO: Usually None; kept to avoid dropping this
-        classification when it is populated for a given variant/gene.
+        @diseaseClasses_HPO (returned field): Populated only for some
+        variant/gene combinations; None otherwise.
 
         @source (returned field): Source names derived from
         scoreBreakdown, collected across all of its components and
@@ -274,9 +273,6 @@ class DisgenetApi:
         return result
 
 
-    # /gda/summary takes every identifier type (gene, disease, uniprot, source, ...)
-    # as an optional query parameter on a single call, so one function covers all
-    # identifier types and filters at once.
     def get_gda_summary(
         self,
         gene_ncbi_id: Union[str, List[str]] = None,
@@ -661,8 +657,7 @@ class DisgenetApi:
         in a single query, but a given pair only carries the metrics it
         actually has: a pair that shares genes but no variants comes back
         with jaccard_variants (and pvalue_jaccard_variants) set to None.
-        This is common rather than exceptional - in a 636-record sample
-        jaccard_variants was None in 382 of them. Callers must guard
+        This is common rather than exceptional, so callers must guard
         against None before doing arithmetic on either jaccard field.
 
         @disease_1: Union[str, List[str]]
@@ -788,7 +783,6 @@ class DisgenetApi:
 
     # Guards against calling the API without a valid key.
     @_if_authenticated
-    #@_delete_cache
     def _retrieve_data(
         self, url: str, get_params: Union[List[str], Dict[str, str]]
     ) -> Tuple[Optional[List[Dict[str, str]]], Optional[Dict[str, str]]]:
@@ -878,9 +872,8 @@ class DisgenetApi:
         Returns source names derived from scoreBreakdown, if present.
 
         Collects every component (curated, clinical, inferred, models,
-        literature, biobank) rather than the curated ones alone, which
-        stays closer to the old API's `source` field; callers wanting a
-        single component can filter downstream.
+        literature, biobank); callers wanting a single component can
+        filter downstream.
 
         A component may be present but null (biobank commonly is), and
         the same source can appear under more than one component
@@ -928,8 +921,8 @@ def variant_gene_mappings(
     uniprot_adapter.py's xref_geneid field (same source used for
     disgenet_annotations()). Queries /entity/variant using gene_ncbi_id,
     which returns each matching variant's own variantToGenes field - a
-    list of {geneNcbiID, symbolOfGene, geneEnsemblID, sources} already
-    grouped per variant, so no manual grouping across rows is needed.
+    list of {geneNcbiID, symbolOfGene, geneEnsemblID, sources} grouped
+    per variant.
 
     @api: DisgenetApi
         An already-authenticated DisgenetApi instance.
@@ -1004,7 +997,7 @@ def variant_gene_mappings(
                         # variant reached through a different gene query
                         # comes back with an identical list, sources
                         # included, so the skipped record has nothing to
-                        # merge in - verified against the API.
+                        # merge in.
                         continue
 
                     mapping[snp_id].append(
@@ -1049,8 +1042,8 @@ def disease_id_mappings(
     This is a standalone function (not a DisgenetApi method); it takes an
     already-authenticated DisgenetApi instance as a parameter and calls
     _retrieve_data directly rather than going through get_gda_summary(),
-    because get_gda_summary()'s narrowed output doesn't include
-    diseaseVocabularies, which is exactly the field this function needs.
+    because get_gda_summary() does not return diseaseVocabularies, which
+    is the field this function needs.
 
     Note on data shape: /gda/summary returns one row per matching gene
     for a queried disease, and every row repeats the same disease-level
@@ -1179,13 +1172,13 @@ def disgenet_annotations(
     building on truncated input.
 
     Requires a list of known NCBI Gene IDs to query against - e.g. from
-    uniprot_adapter.py's xref_geneid field. No gene-symbol-to-UniProt
-    translation is needed: the API returns UniProt IDs directly in
-    geneProteinStrIDs, so those are read straight from the response.
+    uniprot_adapter.py's xref_geneid field. The API returns UniProt IDs
+    directly in geneProteinStrIDs, so those are read straight from the
+    response.
 
     This calls _retrieve_data directly rather than get_gda_summary(),
-    because get_gda_summary()'s narrowed output doesn't include numPMIDs
-    or numDBSNPsupportingAssociation, which map to this function's
+    because get_gda_summary() does not return numPMIDs or
+    numDBSNPsupportingAssociation, which map to this function's
     nof_pmids/nof_snps fields.
 
     @api: DisgenetApi
