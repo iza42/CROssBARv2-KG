@@ -25,7 +25,6 @@
 
 import os
 import collections
-import csv
 import json
 from getpass import getpass
 
@@ -40,7 +39,7 @@ _log = _logger._log
 
 
 class DisgenetApi:
-    
+
     _name = "DisGeNET"
     _api_url = urls.urls["disgenet"]["api_url"]
     _authenticated: bool = False
@@ -55,15 +54,16 @@ class DisgenetApi:
         if self._authenticated and self._api_key != None:
             return True
 
-        print(f"Authorizing in {self._name} API...")
+        _log(f"Authorizing in {self._name} API...")
         # DisGeNET auth is a static per-user API key, no token exchange needed.
         # Checks DISGENET_API_KEY env var first so long batch runs aren't
         # interrupted by a prompt; falls back to getpass otherwise.
         api_key: str = os.environ.get("DISGENET_API_KEY") or getpass("API Key: ")
 
         if not api_key:
-            print(f"No API key provided for {self._name} API.")
+            _log(f"No API key provided for {self._name} API.")
             self._authenticated = False
+            self._api_key = None
             return False
 
         self._api_key = api_key
@@ -153,7 +153,7 @@ class DisgenetApi:
         @source (returned field): Source names derived from
         scoreBreakdown, collected across all of its components and
         deduplicated; may contain multiple values.
-        
+
 
         @variant: Union[str, List[str]]
             Variant (dbSNP Identifier) or list of variants, up to 100.
@@ -260,7 +260,7 @@ class DisgenetApi:
                 self._get_string(entry.get("diseaseUMLSCUI")),
                 self._get_string(entry.get("diseaseName")),
                 tuple(entry["diseaseClasses_DO"]) if entry.get("diseaseClasses_DO") else None,
-                tuple(entry["diseaseClasses_HPO"]) if entry.get("diseaseClasses_HPO") else None, 
+                tuple(entry["diseaseClasses_HPO"]) if entry.get("diseaseClasses_HPO") else None,
                 tuple(entry["diseaseClasses_MSH"]) if entry.get("diseaseClasses_MSH") else None,
                 tuple(entry["diseaseClasses_UMLS_ST"]) if entry.get("diseaseClasses_UMLS_ST") else None,
                 self._get_string(entry.get("diseaseType")).strip("[]") if entry.get("diseaseType") else None,
@@ -273,7 +273,7 @@ class DisgenetApi:
 
         return result
 
-    
+
     # /gda/summary takes every identifier type (gene, disease, uniprot, source, ...)
     # as an optional query parameter on a single call, so one function covers all
     # identifier types and filters at once.
@@ -471,8 +471,8 @@ class DisgenetApi:
 
         return result
 
-    
-        
+
+
 
     def get_vda_evidence(
         self,
@@ -549,7 +549,7 @@ class DisgenetApi:
         return result
 
 
-    
+
     def get_gda_evidence(
         self,
         gene_ncbi_id: Union[str, List[str]] = None,
@@ -617,8 +617,8 @@ class DisgenetApi:
         result, _ = self._retrieve_data(url, get_params)
 
         return result
-    
-    
+
+
 
     def get_dda(
         self,
@@ -739,7 +739,7 @@ class DisgenetApi:
                 tuple(entry["disease2_Classes_HPO"]) if entry.get("disease2_Classes_HPO") else None,
                 tuple(entry["disease2_Classes_MSH"]) if entry.get("disease2_Classes_MSH") else None,
                 tuple(entry["disease2_Classes_UMLS_ST"]) if entry.get("disease2_Classes_UMLS_ST") else None,
-            
+
                 self._get_float(entry.get("jaccard_genes")),
                 self._get_float(entry.get("pvalue_jaccard_genes")),
                 self._get_float(entry.get("jaccard_variants")),
@@ -756,8 +756,8 @@ class DisgenetApi:
             )
 
         return result
-   
-    
+
+
 
     def _list_to_str(
         self, list_obj: List[str], name: str, limit: Optional[int] = None
@@ -873,21 +873,6 @@ class DisgenetApi:
 
         return obj
 
-    def _get_tuple(self, str_obj: str, delim: str) -> Tuple[str]:
-        """
-        Returns a splitted tuple with given delimiter
-
-        @str_obj : str
-            String object to be processed
-        @delim : str
-            Char to split the str_obj
-        """
-
-        if str_obj != None and not isinstance(str_obj, tuple):
-            return tuple([item.strip() for item in str_obj.split(delim)])
-
-        return str_obj
-
     def _get_sources(self, entry) -> Optional[Tuple[str]]:
         """
         Returns source names derived from scoreBreakdown, if present.
@@ -928,7 +913,7 @@ def variant_gene_mappings(
     api: "DisgenetApi",
     gene_ncbi_ids: List[str],
     batch_size: int = 10,
-) -> Tuple[Dict[str, "VariantGeneMapping"], List[List[str]]]:
+) -> Tuple[Dict[str, List["VariantGeneMapping"]], List[List[str]]]:
     """
     Builds a {snpId: [VariantGeneMapping(geneId, geneSymbol, sourceIds),
     ...]} mapping by querying the DisGeNET API.
@@ -951,9 +936,7 @@ def variant_gene_mappings(
     @gene_ncbi_ids: List[str]
         Known NCBI Gene (Entrez) IDs to query, e.g. ["672", "675", ...].
     @batch_size: int
-        Number of gene IDs to send per request. Kept small (10) by
-        default to stay safe under TRIAL account limits while testing;
-        raise this once running under a full academic account.
+        Number of gene IDs to send per request.
     """
 
     VariantGeneMapping = collections.namedtuple(
@@ -1081,9 +1064,7 @@ def disease_id_mappings(
     @mondo_ids: List[str]
         Known MONDO disease IDs to query, e.g. ["MONDO_0007254", ...].
     @batch_size: int
-        Number of disease IDs to send per request. Kept small (10) by
-        default to stay safe under TRIAL account limits while testing;
-        raise this once running under a full academic account.
+        Number of disease IDs to send per request.
     """
 
     Vocabulary = collections.namedtuple(
@@ -1215,9 +1196,7 @@ def disgenet_annotations(
         Only "curated" and "all" are supported (mapped to
         source=["CURATED"] and no source filter, respectively).
     @batch_size: int
-        Number of gene IDs to send per request. Kept small (10) by
-        default to stay safe under TRIAL account limits while testing;
-        raise this once running under a full academic account.
+        Number of gene IDs to send per request.
     """
 
     dataset_source_map = {
@@ -1298,7 +1277,7 @@ def disgenet_annotations(
                 nof_pmids = entry.get("numPMIDs")
                 nof_snps = entry.get("numDBSNPsupportingAssociation")
 
-                
+
                 record_source = api._get_sources(entry)
 
                 annotation = DisGeNetAnnotation(
