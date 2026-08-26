@@ -420,8 +420,8 @@ class Uniprot:
                     # ] = embedding
                     df_list.append((uniprot_id, embedding))
 
-        
-        self.prott5_embedding_df = pd.DataFrame(df_list, columns=['uniprot_id', 'embedding'])
+        # keyed by uniprot accession for O(1) lookup in _get_protein_properties
+        self.prott5_embeddings = dict(df_list)
 
         del df_list
                     
@@ -452,7 +452,8 @@ class Uniprot:
                     # ] = embedding
                     df_list.append((uniprot_id, embedding))
 
-        self.esm2_embedding_df = pd.DataFrame(df_list, columns=['uniprot_id', 'embedding'])
+        # keyed by uniprot accession for O(1) lookup in _get_protein_properties
+        self.esm2_embeddings = dict(df_list)
 
         del df_list
 
@@ -879,16 +880,14 @@ class Uniprot:
                 ] = all_props[k]
 
             elif k == UniprotNodeField.PROTT5_EMBEDDING.value:
-                res = self.prott5_embedding_df[self.prott5_embedding_df["uniprot_id"] == protein_id]["embedding"]
-                if not res.empty:
-                # embedding = np.array(self.prott5_embedding[k]).astype(np.float16)
-                    protein_props[k.replace(" ", "_").replace("-", "_")] = [str(emb) for emb in res.values[0]]
+                res = self.prott5_embeddings.get(protein_id)
+                if res is not None:
+                    protein_props[k.replace(" ", "_").replace("-", "_")] = [str(emb) for emb in res]
 
             elif k == UniprotNodeField.ESM2_EMBEDDING.value:
-                res = self.esm2_embedding_df[self.esm2_embedding_df["uniprot_id"] == protein_id]["embedding"]
-                if not res.empty:
-                # embedding = np.array(self.esm2_embedding[k]).astype(np.float16)
-                    protein_props[k.replace(" ", "_").replace("-", "_")] = [str(emb) for emb in res.values[0]]
+                res = self.esm2_embeddings.get(protein_id)
+                if res is not None:
+                    protein_props[k.replace(" ", "_").replace("-", "_")] = [str(emb) for emb in res]
             
             else:
                 # replace hyphens and spaces with underscore
