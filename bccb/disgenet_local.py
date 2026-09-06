@@ -221,10 +221,10 @@ class DisgenetApi:
         if page_number != None:
             get_params["page_number"] = str(page_number)
 
-        result, _ = self._retrieve_data(url, get_params)
+        result, paging = self._retrieve_data(url, get_params)
 
         if result == None:
-            return None
+            return None, None
 
         VariantDiseaseAssociation = collections.namedtuple(
             "VariantDiseaseAssociation",
@@ -270,8 +270,7 @@ class DisgenetApi:
                 self._get_sources(entry),
             )
 
-        return result
-
+        return result, paging
 
     def get_gda_summary(
         self,
@@ -408,10 +407,10 @@ class DisgenetApi:
         if page_number != None:
             get_params["page_number"] = str(page_number)
 
-        result, _ = self._retrieve_data(url, get_params)
+        result, paging = self._retrieve_data(url, get_params)
 
         if result == None:
-            return None
+            return None, None
 
         GeneDiseaseAssociation = collections.namedtuple(
             "GeneDiseaseAssociation",
@@ -465,7 +464,7 @@ class DisgenetApi:
                 self._get_sources(entry),
             )
 
-        return result
+        return result, paging
 
 
 
@@ -621,6 +620,10 @@ class DisgenetApi:
         disease_1: Union[str, List[str]],
         disease_2: Union[str, List[str]] = None,
         source: Union[str, List[str]] = None,
+        min_jaccard_genes: float = None,
+        min_jaccard_variants: float = None,
+        order_by: str = None,
+        order: str = None,
         page_number: int = None,
     ) -> NamedTuple(
         "DiseaseDiseaseAssociation",
@@ -667,6 +670,16 @@ class DisgenetApi:
             diseases sharing genes/variants with disease_1.
         @source: Union[str, List[str]]
             Source of the DDA.
+        @min_jaccard_genes / @min_jaccard_variants: float
+            Minimum jaccard index on shared genes / shared variants,
+            in [0,1]. Records below the threshold are excluded
+            server-side, so this also caps the number of results
+            returned for a given disease_1 without needing pagination.
+        @order_by: str
+            Field to sort by, e.g. "jaccard_genes" or "jaccard_variants".
+        @order: str
+            Sort direction, "ASC" or "DESC". Only meaningful together
+            with order_by.
         @page_number: int
             Page number (100 results per page; TRIAL accounts are capped
             at the top-10 results and do not support pagination).
@@ -684,6 +697,18 @@ class DisgenetApi:
 
         if source != None:
             get_params["source"] = source
+
+        if min_jaccard_genes != None:
+            get_params["min_jaccard_genes"] = str(min_jaccard_genes)
+
+        if min_jaccard_variants != None:
+            get_params["min_jaccard_variants"] = str(min_jaccard_variants)
+
+        if order_by != None:
+            get_params["order_by"] = order_by
+
+        if order != None:
+            get_params["order"] = order
 
         if page_number != None:
             get_params["page_number"] = str(page_number)
@@ -814,8 +839,39 @@ class DisgenetApi:
         c = curl.Curl(url=url, get=get_params, req_headers=headers)
 
         if c.status == 0 or c.status == 200:
-            result = c.result
-            result = json.loads(result)
+            raw_result = c.result
+
+            # The API has occasionally been observed to concatenate two
+            # JSON documents in one response body (e.g. a quota-exceeded
+            # error followed by a valid payload). raw_decode() parses only
+            # the first document and reports where it stopped, so this is
+            # detected explicitly rather than silently swallowed by
+            # json.loads() failing or, worse, silently succeeding on the
+            # wrong document.
+            decoder = json.JSONDecoder()
+            try:
+                result, end_index = decoder.raw_decode(raw_result)
+            except json.JSONDecodeError as e:
+                _log(f"DisGeNET: could not parse response as JSON: {e}")
+                _log(f"DisGeNET response body: {repr(raw_result)[:200]}")
+                return None, None
+
+            leftover = raw_result[end_index:].strip()
+            if leftover:
+                _log(
+                    "DisGeNET: response contained more than one JSON "
+                    "document; the first one is used, the remainder is "
+                    "discarded. This has been observed to happen when the "
+                    "API quota is exceeded mid-request."
+                )
+                _log(f"DisGeNET first document: {repr(raw_result[:200])}")
+
+            if result.get("status") != "OK":
+                _log(
+                    f"DisGeNET: API returned a non-OK status: "
+                    f"{repr(raw_result)[:300]}"
+                )
+                return None, None
 
             # Records live under "payload"; "paging" carries pageSize,
             # totalElements, and currentPageNumber, which callers doing
@@ -1009,9 +1065,7 @@ def variant_gene_mappings(
                     )
                     existing_pairs.add(pair)
 
-            page_size = paging.get("pageSize", 100)
-
-            if len(result) < page_size:
+            if paging.get("totalElementsInPage", 0) < paging.get("pageSize", 100):
                 break
 
             page_number += 1
@@ -1041,16 +1095,18 @@ def disease_id_mappings(
 
     This is a standalone function (not a DisgenetApi method); it takes an
     already-authenticated DisgenetApi instance as a parameter and calls
-    _retrieve_data directly rather than going through get_gda_summary(),
-    because get_gda_summary() does not return diseaseVocabularies, which
-    is the field this function needs.
+    _retrieve_data directly against the /entity/disease endpoint, which
+    returns disease-level records (name + diseaseCodes) rather than the
+    per-gene-association rows get_gda_summary() returns.
 
-    Note on data shape: /gda/summary returns one row per matching gene
-    for a queried disease, and every row repeats the same disease-level
-    diseaseVocabularies value. We only need that value once per
-    disease, so once a disease_id has been recorded we skip it on
-    subsequent rows - this does not lose any information, since this
-    function only returns name + vocabularies per disease, no gene data.
+    Note on data shape: a single queried MONDO id can match more than
+    one disease entity in the response - e.g. an umbrella disease and
+    a related subtype can both list the same MONDO code among their
+    diseaseCodes - so the same disease_id can appear more than once
+    across a batch's paginated results. We only need each disease's
+    name + vocabularies once, so once a disease_id has been recorded
+    we skip it on subsequent rows - this does not lose any information,
+    since this function only returns name + vocabularies per disease.
 
     @api: DisgenetApi
         An already-authenticated DisgenetApi instance.
@@ -1059,7 +1115,6 @@ def disease_id_mappings(
     @batch_size: int
         Number of disease IDs to send per request.
     """
-
     Vocabulary = collections.namedtuple(
         "Vocabulary",
         [
@@ -1068,7 +1123,6 @@ def disease_id_mappings(
             "vocabularyName",
         ],
     )
-
     DiseaseIdMapping = collections.namedtuple(
         "DiseaseIdMapping",
         [
@@ -1076,23 +1130,18 @@ def disease_id_mappings(
             "vocabularies",
         ],
     )
-
     mapping = dict()
     failed_batches = []
-
     for i in range(0, len(mondo_ids), batch_size):
         batch = mondo_ids[i : i + batch_size]
         page_number = 0
-
         while True:
-            url = f"{api._api_url}/gda/summary"
+            url = f"{api._api_url}/entity/disease"
             get_params = {
                 "disease": batch,
                 "page_number": str(page_number),
             }
-
             result, paging = api._retrieve_data(url, get_params)
-
             if paging is None:
                 # A real error occurred (auth failure, bad response, etc.),
                 # not just an empty final page — stop this batch rather than
@@ -1104,53 +1153,39 @@ def disease_id_mappings(
                 )
                 failed_batches.append(batch)
                 break
-
             if not result:
                 break
-
             for entry in result:
                 disease_id = entry.get("diseaseUMLSCUI")
-                raw_vocabs = entry.get("diseaseVocabularies")
-
-                if disease_id == None or not raw_vocabs:
+                raw_codes = entry.get("diseaseCodes")
+                if disease_id is None or not raw_codes:
                     continue
-
-                # A disease query returns one row per matching gene;
-                # every row repeats the same disease-level vocabulary
-                # info, so we only process the first occurrence.
+                # The same disease_id can recur across a batch's results
+                # (see docstring note above); only the first occurrence
+                # needs to be processed.
                 if disease_id in mapping:
                     continue
-
-                name = entry.get("diseaseName")
+                name = entry.get("name")
                 vocab_list = []
-
-                for raw in raw_vocabs:
-                    parts = raw.split("_", 1)
-
-                    if len(parts) != 2:
+                for raw in raw_codes:
+                    vocabulary = raw.get("vocabulary")
+                    code = raw.get("code")
+                    if not vocabulary or not code:
                         continue
-
-                    vocabulary, code = parts
                     vocab_list.append(
                         Vocabulary(
                             vocabulary,
                             code,
-                            # diseaseVocabularies carries only short
-                            # prefixes (e.g. "MESH", "MONDO"), no full
-                            # vocabulary name.
+                            # diseaseCodes entries carry only the short
+                            # vocabulary prefix (e.g. "MSH", "MONDO"),
+                            # no full vocabulary name.
                             None,
                         )
                     )
-
                 mapping[disease_id] = DiseaseIdMapping(name, tuple(vocab_list))
-
-            page_size = paging.get("pageSize", 100)
-
-            if len(result) < page_size:
+            if paging.get("totalElementsInPage", 0) < paging.get("pageSize", 100):
                 break
-
             page_number += 1
-
     return mapping, failed_batches
 
 
@@ -1287,9 +1322,7 @@ def disgenet_annotations(
                 for uniprot in uniprot_ids:
                     data[uniprot].add(annotation)
 
-            page_size = paging.get("pageSize", 100)
-
-            if len(result) < page_size:
+            if paging.get("totalElementsInPage", 0) < paging.get("pageSize", 100):
                 break
 
             page_number += 1

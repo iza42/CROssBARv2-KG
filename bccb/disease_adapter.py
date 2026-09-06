@@ -425,7 +425,9 @@ class Disease:
                 if v.get("KEGG Drug")
             }
 
-            kegg_disease_ids = kegg_local._Disease()._data.keys()
+            kegg_disease_ids = list(kegg_local._Disease()._data.keys())
+            if self.early_stopping:
+                kegg_disease_ids = kegg_disease_ids[:self.early_stopping]
 
             self.kegg_diseases_mappings = {}
             for dis in kegg_disease_ids:
@@ -450,7 +452,9 @@ class Disease:
             )
 
             if not hasattr(self, "kegg_diseases_mappings"):
-                kegg_disease_ids = kegg_local._Disease()._data.keys()
+                kegg_disease_ids = list(kegg_local._Disease()._data.keys())
+                if self.early_stopping:
+                    kegg_disease_ids = kegg_disease_ids[:self.early_stopping]
 
                 self.kegg_diseases_mappings = {}
                 for dis in kegg_disease_ids:
@@ -569,6 +573,10 @@ class Disease:
         disease_ids_prefixed = [
             f"UMLS_{disease_id}" for disease_id in self.disgenet_disease_ids
         ]
+
+        if self.early_stopping:
+            disease_ids_prefixed = disease_ids_prefixed[:self.early_stopping]
+
         batch_size = 10
 
         # a page past the end comes back as an empty list, so a None means
@@ -582,44 +590,94 @@ class Disease:
             self.disgenet_dda_gene = []
             self.disgenet_dda_variant = []
 
+            # Old API's limit=10 no longer exists server-side (its endpoint
+            # is gone), and the new /dda endpoint has no result cap - a
+            # single popular disease can span dozens to hundreds of pages,
+            # which is not viable across ~25k MONDO diseases under a daily
+            # quota. min_jaccard_genes/min_jaccard_variants are used instead
+            # to cap results server-side by relatedness strength rather than
+            # by a fixed count. Thresholds (0.1 / 0.01) were chosen from
+            # testing against ~1000 real MONDO-derived diseases: every
+            # disease's single-page (page 0) result stayed under the API's
+            # 100-per-page limit at these thresholds, so pagination below is
+            # a safety net for the batch (10 diseases combined) rather than
+            # a single disease's own result count.
             for i in tqdm(range(0, len(disease_ids_prefixed), batch_size)):
                 batch = disease_ids_prefixed[i : i + batch_size]
+
                 page_number = 0
                 # the query functions discard the paging metadata, so the
                 # page size is taken from the first full page rather than
                 # assumed - it is not the same on every account tier
                 page_size = None
-
                 while True:
-                    dda_result = self.disgenet_api.get_dda(
-                        disease_1=batch, page_number=page_number
+                    dda_gene_result = self.disgenet_api.get_dda(
+                        disease_1=batch,
+                        min_jaccard_genes=0.1,
+                        order_by="jaccard_genes",
+                        order="DESC",
+                        page_number=page_number,
                     )
 
-                    if dda_result is None:
-                        self.disgenet_failed_batches.append(("dda", batch))
+                    if dda_gene_result is None:
+                        self.disgenet_failed_batches.append(("dda_gene", batch))
                         logger.warning(
-                            f"DDA batch starting at {batch[0]} was cut short "
+                            f"DDA gene batch starting at {batch[0]} was cut short "
                             f"at page {page_number} by a retrieval error; "
                             f"results for these ids are incomplete."
                         )
                         break
 
-                    if not dda_result:
+                    if not dda_gene_result:
                         if page_number == 0:
                             logger.debug(
-                                f"DDA batch starting at {batch[0]} not available"
+                                f"DDA gene batch starting at {batch[0]} not available"
                             )
                         break
 
-                    # get_dda() returns both jaccard_genes and jaccard_variants
-                    # from one call now; both lists reference the same records.
-                    self.disgenet_dda_gene.extend(dda_result)
-                    self.disgenet_dda_variant.extend(dda_result)
+                    self.disgenet_dda_gene.extend(dda_gene_result)
 
                     if page_size is None:
-                        page_size = len(dda_result)
+                        page_size = len(dda_gene_result)
 
-                    if len(dda_result) < page_size:
+                    if len(dda_gene_result) < page_size:
+                        break
+
+                    page_number += 1
+
+                page_number = 0
+                page_size = None
+                while True:
+                    dda_variant_result = self.disgenet_api.get_dda(
+                        disease_1=batch,
+                        min_jaccard_variants=0.01,
+                        order_by="jaccard_variants",
+                        order="DESC",
+                        page_number=page_number,
+                    )
+
+                    if dda_variant_result is None:
+                        self.disgenet_failed_batches.append(("dda_variant", batch))
+                        logger.warning(
+                            f"DDA variant batch starting at {batch[0]} was cut short "
+                            f"at page {page_number} by a retrieval error; "
+                            f"results for these ids are incomplete."
+                        )
+                        break
+
+                    if not dda_variant_result:
+                        if page_number == 0:
+                            logger.debug(
+                                f"DDA variant batch starting at {batch[0]} not available"
+                            )
+                        break
+
+                    self.disgenet_dda_variant.extend(dda_variant_result)
+
+                    if page_size is None:
+                        page_size = len(dda_variant_result)
+
+                    if len(dda_variant_result) < page_size:
                         break
 
                     page_number += 1
@@ -735,7 +793,6 @@ class Disease:
                 f"incomplete. The affected query types and ids are in "
                 f"self.disgenet_failed_batches."
             )
-
     def download_malacards_data(self,
                                 malacards_json_path: FilePath | None = None, 
                                 malacards_related_diseases_json_path: FilePath | None = None) -> None:
@@ -780,7 +837,8 @@ class Disease:
         self.disease_id_to_doc2vec_embedding = {}
         with h5py.File(doc2vec_embedding_path, "r") as f:
             for mondo_id, embedding in f.items():
-                self.hpo_id_to_cada_embedding[mondo_id] = np.array(embedding).astype(np.float16)
+                # Map Doc2Vec embedding vectors directly to their corresponding MONDO disease IDs
+                self.disease_id_to_doc2vec_embedding[mondo_id] = np.array(embedding).astype(np.float16)
 
     def prepare_mappings(self) -> None:
         """
@@ -857,7 +915,7 @@ class Disease:
             "EFO",
             "HPO",
             "MONDO",
-            "MESH",
+            "MSH",
             "NCI",
             "ICD10",
             "OMIM",
@@ -2192,12 +2250,15 @@ class Disease:
                     prefix="ncbitaxon", identifier=interaction.pathogen_taxid
                 )
 
-                edge_list.append((None, organism_id, disease_id, label, {}))
+                # Provenance metadata
+                props = {"source": "PathoPhenoDB"}
 
-            if self.early_stopping and index == self.early_stopping:
+                edge_list.append((None, organism_id, disease_id, label, props))
+
+            if self.early_stopping and len(edge_list) >= self.early_stopping:
                 break
 
-        # write hiererchical edge data to csv
+        # write organism-disease edge data to csv
         if self.export_csv:
             if self.output_dir:
                 full_path = os.path.join(
@@ -2209,15 +2270,20 @@ class Disease:
                 )
 
             df_list = [
-                {"organism_id": organism, "disease_id": disease, "label": label}
-                for _, organism, disease, label, _ in edge_list
+                {
+                    "organism_id": organism,
+                    "disease_id": disease,
+                    "label": label,
+                    "source": props.get("source"),
+                }
+                for _, organism, disease, label, props in edge_list
             ]
             df = pd.DataFrame.from_records(df_list)
             df.to_csv(full_path, index=False)
             logger.info(f"Organism-Disease edge data is written: {full_path}")
 
         return edge_list
-
+        
     @validate_call
     def get_disease_drug_edges(
         self, label: str = "disease_is_treated_by_drug"
