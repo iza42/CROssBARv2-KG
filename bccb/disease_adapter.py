@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pypath.share import curl, settings
 from pypath.inputs import (
-    pathophenodb,
+    #pathophenodb,
     ctdbase,
     clinvar,
     # disgenet,
@@ -281,7 +281,7 @@ class Disease:
 
             self.download_mondo_data()
             self.prepare_mappings()
-            self.download_pathophenodb_data()
+            #self.download_pathophenodb_data()
             self.download_ctd_data()
             self.download_chembl_data()
             self.download_diseases_data()
@@ -337,18 +337,17 @@ class Disease:
                 f"Mondo hierarchical relations data is downloaded in {round((t1-t0) / 60, 2)} mins"
             )
 
-    def download_pathophenodb_data(self) -> None:
-        if DiseaseEdgeType.ORGANISM_TO_DISEASE in self.edge_types:
-            t0 = time()
+    # def download_pathophenodb_data(self) -> None:
+    #     if DiseaseEdgeType.ORGANISM_TO_DISEASE in self.edge_types:
+    #         t0 = time()
 
-            self.pathopheno_organism_disease_int = (
-                pathophenodb.disease_pathogen_interactions()
-            )
+    #         self.pathopheno_organism_disease_int = (
+    #             pathophenodb.disease_pathogen_interactions()
+    #         )
 
-            t1 = time()
-            logger.info(
-                f"PathophenoDB organism-disease interaction data is downloaded in {round((t1-t0) / 60, 2)} mins"
-            )
+    #         t1 = time()
+    #         logger.info(
+    #             f"PathophenoDB organism-disease interaction data is downloaded in {round((t1-t0) / 60, 2)} mins")
 
     def download_ctd_data(self) -> None:
         if DiseaseEdgeType.GENE_TO_DISEASE in self.edge_types:
@@ -606,12 +605,8 @@ class Disease:
                 batch = disease_ids_prefixed[i : i + batch_size]
 
                 page_number = 0
-                # the query functions discard the paging metadata, so the
-                # page size is taken from the first full page rather than
-                # assumed - it is not the same on every account tier
-                page_size = None
                 while True:
-                    dda_gene_result = self.disgenet_api.get_dda(
+                    dda_gene_result, paging = self.disgenet_api.get_dda(
                         disease_1=batch,
                         min_jaccard_genes=0.1,
                         order_by="jaccard_genes",
@@ -619,7 +614,7 @@ class Disease:
                         page_number=page_number,
                     )
 
-                    if dda_gene_result is None:
+                    if paging is None:
                         self.disgenet_failed_batches.append(("dda_gene", batch))
                         logger.warning(
                             f"DDA gene batch starting at {batch[0]} was cut short "
@@ -637,18 +632,14 @@ class Disease:
 
                     self.disgenet_dda_gene.extend(dda_gene_result)
 
-                    if page_size is None:
-                        page_size = len(dda_gene_result)
-
-                    if len(dda_gene_result) < page_size:
+                    if paging.get("totalElementsInPage", 0) < paging.get("pageSize", 100):
                         break
 
                     page_number += 1
 
                 page_number = 0
-                page_size = None
                 while True:
-                    dda_variant_result = self.disgenet_api.get_dda(
+                    dda_variant_result, paging = self.disgenet_api.get_dda(
                         disease_1=batch,
                         min_jaccard_variants=0.01,
                         order_by="jaccard_variants",
@@ -656,7 +647,7 @@ class Disease:
                         page_number=page_number,
                     )
 
-                    if dda_variant_result is None:
+                    if paging is None:
                         self.disgenet_failed_batches.append(("dda_variant", batch))
                         logger.warning(
                             f"DDA variant batch starting at {batch[0]} was cut short "
@@ -674,10 +665,7 @@ class Disease:
 
                     self.disgenet_dda_variant.extend(dda_variant_result)
 
-                    if page_size is None:
-                        page_size = len(dda_variant_result)
-
-                    if len(dda_variant_result) < page_size:
+                    if paging.get("totalElementsInPage", 0) < paging.get("pageSize", 100):
                         break
 
                     page_number += 1
@@ -716,13 +704,12 @@ class Disease:
                 batch = disease_ids_prefixed[i : i + batch_size]
 
                 page_number = 0
-                page_size = None
                 while True:
-                    gda_result = self.disgenet_api.get_gda_summary(
+                    gda_result, paging = self.disgenet_api.get_gda_summary(
                         disease=batch, page_number=page_number
                     )
 
-                    if gda_result is None:
+                    if paging is None:
                         self.disgenet_failed_batches.append(("gda", batch))
                         logger.warning(
                             f"GDA batch starting at {batch[0]} was cut short "
@@ -740,22 +727,18 @@ class Disease:
 
                     self.disgenet_gda.extend(gda_result)
 
-                    if page_size is None:
-                        page_size = len(gda_result)
-
-                    if len(gda_result) < page_size:
+                    if paging.get("totalElementsInPage", 0) < paging.get("pageSize", 100):
                         break
 
                     page_number += 1
 
                 page_number = 0
-                page_size = None
                 while True:
-                    vda_result = self.disgenet_api.get_vda_summary(
+                    vda_result, paging = self.disgenet_api.get_vda_summary(
                         disease=batch, page_number=page_number
                     )
 
-                    if vda_result is None:
+                    if paging is None:
                         self.disgenet_failed_batches.append(("vda", batch))
                         logger.warning(
                             f"VDA batch starting at {batch[0]} was cut short "
@@ -773,10 +756,7 @@ class Disease:
 
                     self.disgenet_vda.extend(vda_result)
 
-                    if page_size is None:
-                        page_size = len(vda_result)
-
-                    if len(vda_result) < page_size:
+                    if paging.get("totalElementsInPage", 0) < paging.get("pageSize", 100):
                         break
 
                     page_number += 1
@@ -2162,8 +2142,8 @@ class Disease:
         if DiseaseEdgeType.MONDO_HIERARCHICAL_RELATIONS in self.edge_types:
             edge_list.extend(self.get_mondo_hiererchical_edges(mondo_hierarchy_label))
 
-        if DiseaseEdgeType.ORGANISM_TO_DISEASE in self.edge_types:
-            edge_list.extend(self.get_organism_disease_edges(organism_to_disease_label))
+        #if DiseaseEdgeType.ORGANISM_TO_DISEASE in self.edge_types:
+        #    edge_list.extend(self.get_organism_disease_edges(organism_to_disease_label))
 
         return edge_list
 
@@ -2215,74 +2195,74 @@ class Disease:
 
         return edge_list
 
-    @validate_call
-    def get_organism_disease_edges(
-        self, label: str = "organism_causes_disease"
-    ) -> list[tuple]:
+    # @validate_call
+    # def get_organism_disease_edges(
+    #     self, label: str = "organism_causes_disease"
+    # ) -> list[tuple]:
 
-        if not hasattr(self, "pathopheno_organism_disease_int"):
-            self.download_pathophenodb_data()
+    #     if not hasattr(self, "pathopheno_organism_disease_int"):
+    #         self.download_pathophenodb_data()
 
-        if not hasattr(self, "mondo_mappings"):
-            self.prepare_mappings()
+    #     if not hasattr(self, "mondo_mappings"):
+    #         self.prepare_mappings()
 
-        logger.debug("Started writing organism-disease edges")
+    #     logger.debug("Started writing organism-disease edges")
 
-        edge_list = []
+    #     edge_list = []
 
-        for index, interaction in enumerate(
-            tqdm(self.pathopheno_organism_disease_int)
-        ):
-            if (
-                interaction.evidence == "manual assertion"
-                and self.mondo_mappings["DOID"].get(
-                    interaction.disease_id.split(":")[1], None
-                )
-            ):
+    #     for index, interaction in enumerate(
+    #         tqdm(self.pathopheno_organism_disease_int)
+    #     ):
+    #         if (
+    #             interaction.evidence == "manual assertion"
+    #             and self.mondo_mappings["DOID"].get(
+    #                 interaction.disease_id.split(":")[1], None
+    #             )
+    #         ):
 
-                disease_id = self.add_prefix_to_id(
-                    prefix="MONDO",
-                    identifier=self.mondo_mappings["DOID"].get(
-                        interaction.disease_id.split(":")[1]
-                    ),
-                )
-                organism_id = self.add_prefix_to_id(
-                    prefix="ncbitaxon", identifier=interaction.pathogen_taxid
-                )
+    #             disease_id = self.add_prefix_to_id(
+    #                 prefix="MONDO",
+    #                 identifier=self.mondo_mappings["DOID"].get(
+    #                     interaction.disease_id.split(":")[1]
+    #                 ),
+    #             )
+    #             organism_id = self.add_prefix_to_id(
+    #                 prefix="ncbitaxon", identifier=interaction.pathogen_taxid
+    #             )
 
-                # Provenance metadata
-                props = {"source": "PathoPhenoDB"}
+    #             # Provenance metadata
+    #             props = {"source": "PathoPhenoDB"}
 
-                edge_list.append((None, organism_id, disease_id, label, props))
+    #             edge_list.append((None, organism_id, disease_id, label, props))
 
-            if self.early_stopping and len(edge_list) >= self.early_stopping:
-                break
+    #         if self.early_stopping and index == self.early_stopping:
+    #             break
 
-        # write organism-disease edge data to csv
-        if self.export_csv:
-            if self.output_dir:
-                full_path = os.path.join(
-                    self.output_dir, "Organism_to_disease_edge.csv"
-                )
-            else:
-                full_path = os.path.join(
-                    os.getcwd(), "Organism_to_disease_edge.csv"
-                )
+    #     # write organism-disease edge data to csv
+    #     if self.export_csv:
+    #         if self.output_dir:
+    #             full_path = os.path.join(
+    #                 self.output_dir, "Organism_to_disease_edge.csv"
+    #             )
+    #         else:
+    #             full_path = os.path.join(
+    #                 os.getcwd(), "Organism_to_disease_edge.csv"
+    #             )
 
-            df_list = [
-                {
-                    "organism_id": organism,
-                    "disease_id": disease,
-                    "label": label,
-                    "source": props.get("source"),
-                }
-                for _, organism, disease, label, props in edge_list
-            ]
-            df = pd.DataFrame.from_records(df_list)
-            df.to_csv(full_path, index=False)
-            logger.info(f"Organism-Disease edge data is written: {full_path}")
+    #         df_list = [
+    #             {
+    #                 "organism_id": organism,
+    #                 "disease_id": disease,
+    #                 "label": label,
+    #                 "source": props.get("source"),
+    #             }
+    #             for _, organism, disease, label, props in edge_list
+    #         ]
+    #         df = pd.DataFrame.from_records(df_list)
+    #         df.to_csv(full_path, index=False)
+    #         logger.info(f"Organism-Disease edge data is written: {full_path}")
 
-        return edge_list
+    #     return edge_list
         
     @validate_call
     def get_disease_drug_edges(
@@ -2483,7 +2463,7 @@ class Disease:
             "DO": "DOID",
             "EFO": "EFO",
             "HPO": "HP",
-            "MESH": "MESH",
+            "MSH": "MESH",
             "NCI": "NCIT",
             "ICD10": "ICD10CM",
             "OMIM": "OMIM",

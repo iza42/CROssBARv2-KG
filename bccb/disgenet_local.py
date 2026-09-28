@@ -713,10 +713,10 @@ class DisgenetApi:
         if page_number != None:
             get_params["page_number"] = str(page_number)
 
-        result, _ = self._retrieve_data(url, get_params)
+        result, paging = self._retrieve_data(url, get_params)
 
         if result == None:
-            return None
+            return None, None
 
         DiseaseDiseaseAssociation = collections.namedtuple(
             "DiseaseDiseaseAssociation",
@@ -775,7 +775,7 @@ class DisgenetApi:
                 self._get_string(entry.get("disease2_UMLSCUI")),
             )
 
-        return result
+        return result, paging
 
 
 
@@ -841,32 +841,45 @@ class DisgenetApi:
         if c.status == 0 or c.status == 200:
             raw_result = c.result
 
-            # The API has occasionally been observed to concatenate two
-            # JSON documents in one response body (e.g. a quota-exceeded
-            # error followed by a valid payload). raw_decode() parses only
-            # the first document and reports where it stopped, so this is
-            # detected explicitly rather than silently swallowed by
-            # json.loads() failing or, worse, silently succeeding on the
-            # wrong document.
+            # The body can contain more than one concatenated JSON document:
+            # pypath's retry loop appends a successful retry after the failed
+            # attempt (e.g. a quota-exceeded error followed by a valid
+            # payload). The valid response is therefore the LAST document,
+            # so all documents are parsed and the last one is used.
             decoder = json.JSONDecoder()
+            documents = []
+            index = 0
+
             try:
-                result, end_index = decoder.raw_decode(raw_result)
+                while index < len(raw_result):
+                    # raw_decode() does not skip leading whitespace
+                    while index < len(raw_result) and raw_result[index].isspace():
+                        index += 1
+
+                    if index >= len(raw_result):
+                        break
+
+                    document, index = decoder.raw_decode(raw_result, index)
+                    documents.append(document)
             except json.JSONDecodeError as e:
                 _log(f"DisGeNET: could not parse response as JSON: {e}")
                 _log(f"DisGeNET response body: {repr(raw_result)[:200]}")
                 return None, None
 
-            leftover = raw_result[end_index:].strip()
-            if leftover:
-                _log(
-                    "DisGeNET: response contained more than one JSON "
-                    "document; the first one is used, the remainder is "
-                    "discarded. This has been observed to happen when the "
-                    "API quota is exceeded mid-request."
-                )
-                _log(f"DisGeNET first document: {repr(raw_result[:200])}")
+            if not documents:
+                _log("DisGeNET: empty response body.")
+                return None, None
 
-            if result.get("status") != "OK":
+            if len(documents) > 1:
+                _log(
+                    f"DisGeNET: response contained {len(documents)} JSON "
+                    "documents; the last one is used, since a retried "
+                    "request is appended after the failed attempt."
+                )
+
+            result = documents[-1]
+
+            if not isinstance(result, dict) or result.get("status") != "OK":
                 _log(
                     f"DisGeNET: API returned a non-OK status: "
                     f"{repr(raw_result)[:300]}"
@@ -883,7 +896,6 @@ class DisgenetApi:
         _log(f"DisGeNET: an error occurred with the code {c.status}")
         _log(f"DisGeNET response body: {repr(c.result)[:200]}")
         return None, None # keep return shape consistent for (result, paging) unpacking
-
     def _get_int(self, str_obj) -> int:
         """
         Returns an int if the object is not None
