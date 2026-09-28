@@ -130,17 +130,16 @@ uniprot_adapter = Uniprot(
 
 uniprot_adapter.download_uniprot_data(cache=CACHE, retries=6)
 
-uniprot_nodes = uniprot_adapter.get_nodes()
 uniprot_edges = uniprot_adapter.get_edges()
 
 
-bc.write_nodes(uniprot_nodes)
+bc.write_nodes(uniprot_adapter.get_nodes())
 bc.write_edges(uniprot_edges)
 
 
 if export_as_csv:
     uniprot_adapter.export_data_to_csv(path=output_dir_path,
-                                    node_data=uniprot_nodes,
+                                    node_data=uniprot_adapter.get_nodes(),
                                     edge_data=uniprot_edges)
 
 # PPI

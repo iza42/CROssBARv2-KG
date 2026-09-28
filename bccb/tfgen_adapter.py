@@ -5,7 +5,7 @@ from pypath.inputs import collectri, dorothea, trrust, uniprot
 import pypath.utils.mapping as mapping
 
 from contextlib import ExitStack
-from typing import Union, Literal
+from typing import Union
 from enum import Enum, EnumMeta, IntEnum
 from biocypher._logger import logger
 from pydantic import BaseModel, DirectoryPath, validate_call
@@ -14,10 +14,11 @@ import os
 
 from bioregistry import normalize_curie
 from tqdm import tqdm
-from time import time
 
 import pandas as pd
 import numpy as np
+
+import time
 
 
 class TFGeneEnumMeta(EnumMeta):
@@ -126,7 +127,12 @@ class TFGene:
         """
 
         with ExitStack() as stack:
-            stack.enter_context(settings.context(retries=retries))
+
+            try:
+                stack.enter_context(settings.context(retries=retries))
+
+            except AttributeError:
+                settings.setup(retries=retries)
 
             if debug:
                 stack.enter_context(curl.debug_on())
@@ -135,13 +141,13 @@ class TFGene:
                 stack.enter_context(curl.cache_off())
 
             logger.debug("Started downloading TF-Gene data")
-            t0 = time()
+            t0 = time.time()
 
             self.download_dorothea_data()
             self.download_collectri_data()
             self.download_trrust_data()
 
-            t1 = time()
+            t1 = time.time()
             logger.info(
                 f"TF-Gene data is downloaded in {round((t1-t0) / 60, 2)} mins"
             )
@@ -149,7 +155,7 @@ class TFGene:
     def download_dorothea_data(self) -> None:
 
         logger.debug("Started downloading DoRothEA data")
-        t0 = time()
+        t0 = time.time()
 
         if 9606 in self.organism:
             self.dorothea_interactions = list(
@@ -158,52 +164,83 @@ class TFGene:
                 )
             )
 
-        t1 = time()
+        t1 = time.time()
         logger.info(
             f"DoRothEA data is downloaded in {round((t1-t0) / 60, 2)} mins"
         )
 
     def download_collectri_data(self) -> None:
         logger.debug("Started downloading CollecTRI data")
-        t0 = time()
+        t0 = time.time()
 
         if 9606 in self.organism:
             self.collectri_interactions = list(
                 collectri.collectri_interactions()
             )
 
-            self.uniprot_to_entrez = {
-                k: v.strip(";").split(";")[0]
-                for k, v in uniprot.uniprot_data(
-                    "xref_geneid", 9606, True
-                ).items()
-            }
+            #retry mechanism
+            max_retries = 3
+            delay = 5  
 
-        t1 = time()
+            for attempt in range(1, max_retries + 1):
+                try:
+                    logger.info(f"Fetching UniProt mapping (Attempt {attempt}/{max_retries})...")
+                    uniprot_map = uniprot.uniprot_data("xref_geneid", 9606, True)
+                   
+                    if uniprot_map:
+                        self.uniprot_to_entrez = {
+                            k: v.strip(";").split(";")[0]
+                            for k, v in uniprot_map.items()
+                            if v
+                        }
+                        logger.info("UniProt mapping successfully fetched.")
+                        break 
+                        
+                    else:
+                        raise ValueError("UniProt returned empty data.")
+
+                except Exception as e:
+                    logger.warning(f"Attempt {attempt} failed: {e}")
+                    if attempt < max_retries:
+                        time.sleep(delay)
+                        delay *= 2  # Exponential backoff (5s, 10s...)
+                    else:
+                        
+                        raise RuntimeError(
+                            f"Critical: Failed to fetch UniProt mapping after {max_retries} attempts. "
+                            "Process stopped to ensure data completeness."
+                        ) from e
+
+        t1 = time.time()
         logger.info(
             f"CollecTRI data is downloaded in {round((t1-t0) / 60, 2)} mins"
         )
 
     def download_trrust_data(self) -> None:
         logger.debug("Started downloading TRRUST data")
-        t0 = time()
+        t0 = time.time()
 
         self.trrust_interactions = []
         self.trrust_gene_symbol_to_entrez_id = {}
+
         if 9606 in self.organism:
             self.trrust_gene_symbol_to_entrez_id |= {
                 entry["gene_symbol"]: entry["entrez_id"]
                 for entry in trrust.scrape_human()
             }
+
+
             self.trrust_interactions.extend(trrust.trrust_human())
+
         if 10090 in self.organism:
-            self.trrust_gene_symbol_to_entrez_id |= {
-                entry["gene_symbol"]: entry["entrez_id"]
-                for entry in trrust.scrape_mouse()
-            }
+            if hasattr(trrust, "scrape_mouse"):
+                self.trrust_gene_symbol_to_entrez_id |= {
+                    entry["gene_symbol"]: entry["entrez_id"]
+                    for entry in trrust.scrape_mouse()
+                }
             self.trrust_interactions.extend(trrust.trrust_mouse())
 
-        t1 = time()
+        t1 = time.time()
         logger.info(
             f"TRRUST data is downloaded in {round((t1-t0) / 60, 2)} mins"
         )
@@ -214,7 +251,7 @@ class TFGene:
             self.download_dorothea_data()
 
         logger.debug("Started processing DoRothEA tf-gen data")
-        t0 = time()
+        t0 = time.time()
 
         df_list = []
         for interaction in self.dorothea_interactions:
@@ -252,7 +289,7 @@ class TFGene:
 
         df["source"] = "DoRothEA"
 
-        t1 = time()
+        t1 = time.time()
         logger.info(
             f"DoRothEA tf-gen data is processed in {round((t1-t0) / 60, 2)} mins"
         )
@@ -264,7 +301,7 @@ class TFGene:
             self.download_collectri_data()
 
         logger.debug("Started processing CollecTRI tf-gen data")
-        t0 = time()
+        t0 = time.time()
 
         df_list = []
         for interaction in self.collectri_interactions:
@@ -319,7 +356,7 @@ class TFGene:
 
         df["source"] = "CollecTRI"
 
-        t1 = time()
+        t1 = time.time()
         logger.info(
             f"CollecTRI tf-gen data is processed in {round((t1-t0) / 60, 2)} mins"
         )
@@ -331,7 +368,7 @@ class TFGene:
             self.download_trrust_data()
 
         logger.debug("Started processing TRRUST tf-gen data")
-        t0 = time()
+        t0 = time.time()
 
         df_list = []
         for interaction in self.trrust_interactions:
@@ -365,7 +402,7 @@ class TFGene:
 
         df["source"] = "TRRUST"
 
-        t1 = time()
+        t1 = time.time()
         logger.info(
             f"TRRUST tf-gen data is processed in {round((t1-t0) / 60, 2)} mins"
         )
@@ -380,7 +417,7 @@ class TFGene:
         collectri_df = self.process_collectri_tf_gene()
 
         logger.debug("Started merging tf-gen edge data")
-        t0 = time()
+        t0 = time.time()
 
         # merge dorothea and collectri
         merged_df = pd.merge(
@@ -424,7 +461,7 @@ class TFGene:
         merged_df.drop(columns=["tf_effect_x", "tf_effect_y"], inplace=True)
         merged_df.dropna(subset="tf_effect", inplace=True)
 
-        t1 = time()
+        t1 = time.time()
         logger.info(
             f"Tf-gene edge data is merged in {round((t1-t0) / 60, 2)} mins"
         )
